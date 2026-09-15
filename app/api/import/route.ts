@@ -1,6 +1,47 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
-import { parseFile,draftSchema } from "@/lib/import/customers";
 import { z } from "zod";
-export async function POST(req:Request){const db=await createClient();const {data:{user}}=await db.auth.getUser();if(!user)return NextResponse.json({error:"Niet ingelogd"},{status:401});const form=await req.formData();const file=form.get("file");if(!(file instanceof File)||!/\.(csv|xlsx|xls)$/i.test(file.name))return NextResponse.json({error:"Kies een CSV- of Excelbestand."},{status:400});try{return NextResponse.json({filename:file.name,...parseFile(await file.arrayBuffer())});}catch(e){return NextResponse.json({error:e instanceof Error?e.message:"Bestand niet leesbaar"},{status:400});}}
-export async function PUT(req:Request){const db=await createClient();const {data:{user}}=await db.auth.getUser();if(!user)return NextResponse.json({error:"Niet ingelogd"},{status:401});const body=await req.json();const rows=z.array(draftSchema).max(5000).safeParse(body.rows);if(!rows.success)return NextResponse.json({error:"Ongeldige import"},{status:400});const valid=rows.data.filter(x=>!x.issues.length);const nums=valid.flatMap(x=>x.customerNumber?[x.customerNumber]:[]);const {data:existing}=nums.length?await db.from("customers").select("customer_number").in("customer_number",nums):{data:[] as {customer_number:string}[]};const used=new Set((existing||[]).map(x=>x.customer_number));const insert=valid.filter(x=>!x.customerNumber||!used.has(x.customerNumber));if(insert.length){const {error}=await db.from("customers").insert(insert.map(x=>({customer_number:x.customerNumber,name:x.name,address_line:x.addressLine,postal_code:x.postalCode,city:x.city,email:x.email,phone:x.phone,extra_fields:{work_type:x.workType||''},geocode_status:'pending'})));if(error)return NextResponse.json({error:`Opslaan mislukt: ${error.message}`},{status:500});}return NextResponse.json({imported:insert.length,skipped:rows.data.length-insert.length});}
+import { createClient } from "@/lib/supabase/server";
+import { parseFile, draftSchema } from "@/lib/import/customers";
+
+const customerKey = (row: { name: string; addressLine: string; postalCode: string | null; city: string | null }) => [row.name, row.addressLine, row.postalCode, row.city].map((value) => String(value || "").trim().toLocaleLowerCase("nl-NL").replace(/\s+/g, " ")).join("|");
+
+export async function POST(request: Request) {
+  const db = await createClient();
+  const { data: { user } } = await db.auth.getUser();
+  if (!user) return NextResponse.json({ error: "Niet ingelogd" }, { status: 401 });
+  const form = await request.formData();
+  const file = form.get("file");
+  if (!(file instanceof File) || !/\.(csv|xlsx|xls)$/i.test(file.name)) return NextResponse.json({ error: "Kies een CSV- of Excelbestand." }, { status: 400 });
+  try { return NextResponse.json({ filename: file.name, ...parseFile(await file.arrayBuffer()) }); }
+  catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : "Bestand niet leesbaar" }, { status: 400 }); }
+}
+
+export async function PUT(request: Request) {
+  const db = await createClient();
+  const { data: { user } } = await db.auth.getUser();
+  if (!user) return NextResponse.json({ error: "Niet ingelogd" }, { status: 401 });
+  const body = await request.json();
+  const parsed = z.array(draftSchema).max(5000).safeParse(body.rows);
+  if (!parsed.success) return NextResponse.json({ error: "Ongeldige import" }, { status: 400 });
+  const rows = parsed.data.filter((row) => !row.issues.length);
+  const { data: existingData, error: customerReadError } = await db.from("customers").select("id,name,address_line,postal_code,city").neq("status", "archived").limit(5000);
+  if (customerReadError) return NextResponse.json({ error: `Klanten controleren mislukt: ${customerReadError.message}` }, { status: 500 });
+  const customerIds = new Map((existingData || []).map((customer) => [customerKey({ name: customer.name, addressLine: customer.address_line, postalCode: customer.postal_code, city: customer.city }), customer.id]));
+  const newCustomers = new Map<string, typeof rows[number]>();
+  for (const row of rows) { const key = customerKey(row); if (!customerIds.has(key)) newCustomers.set(key, row); }
+  if (newCustomers.size) {
+    const { data: created, error } = await db.from("customers").insert([...newCustomers.values()].map((row) => ({ customer_number: row.customerNumber, name: row.name, address_line: row.addressLine, postal_code: row.postalCode, city: row.city, email: row.email, phone: row.phone, desired_visit_minutes: row.durationMinutes, extra_fields: {}, geocode_status: "pending" }))).select("id,name,address_line,postal_code,city");
+    if (error) return NextResponse.json({ error: `Klanten opslaan mislukt: ${error.message}` }, { status: 500 });
+    for (const customer of created || []) customerIds.set(customerKey({ name: customer.name, addressLine: customer.address_line, postalCode: customer.postal_code, city: customer.city }), customer.id);
+  }
+  const numbers = rows.flatMap((row) => row.orderNumber ? [row.orderNumber] : []);
+  const { data: existingOrders, error: orderReadError } = numbers.length ? await db.from("orders").select("source_order_number").in("source_order_number", numbers) : { data: [], error: null };
+  if (orderReadError) return NextResponse.json({ error: `Orders controleren mislukt: ${orderReadError.message}` }, { status: 500 });
+  const knownOrders = new Set((existingOrders || []).map((order) => order.source_order_number));
+  const newOrders = rows.filter((row) => row.orderNumber && !knownOrders.has(row.orderNumber));
+  if (newOrders.length) {
+    const { error } = await db.from("orders").insert(newOrders.map((row) => ({ source_order_number: row.orderNumber, customer_id: customerIds.get(customerKey(row)), work_type: row.workType, duration_minutes: row.durationMinutes, required_people: row.requiredPeople || 1, metadata: { imported_via: "vendit" } })));
+    if (error) return NextResponse.json({ error: `Orders opslaan mislukt: ${error.message}` }, { status: 500 });
+  }
+  return NextResponse.json({ customers: newCustomers.size, orders: newOrders.length, skipped: parsed.data.length - newOrders.length });
+}
