@@ -1,0 +1,2 @@
+import {redirect}from"next/navigation";import Link from"next/link";import{createClient}from"@/lib/supabase/server";import ImportClient from"./upload";
+export default async function Page(){const db=await createClient();const {data:{user}}=await db.auth.getUser();if(!user)redirect('/login');return <main className="shell"><header className="topbar"><Link className="brand" href="/dashboard">Expert <span>Planner</span></Link></header><ImportClient/></main>}

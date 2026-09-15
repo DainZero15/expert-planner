@@ -1,0 +1,3 @@
+import { redirect } from "next/navigation";
+import { createClient } from "@/lib/supabase/server";
+export default async function Dashboard() { const supabase = await createClient(); const { data: { user } } = await supabase.auth.getUser(); if (!user) redirect("/login"); return <main className="shell"><header className="topbar"><div className="brand">Expert <span>Planner</span></div><span className="muted">{user.email}</span></header><section className="card"><div className="eyebrow">Dashboard</div><h1>Welkom.</h1><p className="muted">Uw bestand wordt eerst gecontroleerd, pas daarna opgeslagen.</p><p><a href="/import">Klanten importeren</a> · <a href="/customers">Klanten beheren</a></p></section></main>; }
