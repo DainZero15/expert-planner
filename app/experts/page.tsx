@@ -1,1 +1,48 @@
-import Link from'next/link';import{redirect}from'next/navigation';import{createClient}from'@/lib/supabase/server';import Form from'./form';export default async function Page({searchParams}:{searchParams:Promise<{error?:string;success?:string}>}){const s=await createClient(),{data:{user}}=await s.auth.getUser();if(!user)redirect('/login');const{data:experts}=await s.from('experts').select('*').order('name');const message=await searchParams;return <main className="shell"><header className="topbar"><Link className="brand" href="/dashboard">Expert <span>Planner</span></Link></header>{message.error&&<p className="error">{message.error}</p>}{message.success&&<p className="success">Expert toegevoegd.</p>}<Form/><section className="card" style={{marginTop:20}}><h1>Experts</h1>{experts?.length?experts.map(e=><p key={e.id}><strong>{e.name}</strong> · {e.start_time.slice(0,5)}–{e.end_time.slice(0,5)} · {e.default_visit_minutes} min bezoek</p>):<p>Geen experts.</p>}</section></main>}
+import Link from "next/link";
+import { redirect } from "next/navigation";
+import { createClient } from "@/lib/supabase/server";
+
+export default async function ExpertsPage() {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const { data: experts } = await supabase
+    .from("experts")
+    .select("id, name, start_time, end_time, default_visit_minutes")
+    .order("name");
+
+  return (
+    <main className="shell">
+      <header className="topbar">
+        <Link className="brand" href="/dashboard">Expert <span>Planner</span></Link>
+      </header>
+
+      <form action="/api/experts" method="post" className="card">
+        <h1>Expert toevoegen</h1>
+        <label>Naam<input name="name" required /></label>
+        <label>Startadres<input name="start" required /></label>
+        <label>Eindadres<input name="end" required /></label>
+        <div className="grid">
+          <label>Begintijd<input name="startTime" type="time" defaultValue="08:00" /></label>
+          <label>Eindtijd<input name="endTime" type="time" defaultValue="17:00" /></label>
+          <label>Pauze minuten<input name="breakMinutes" type="number" defaultValue="30" /></label>
+        </div>
+        <label>Standaard bezoektijd minuten<input name="visitMinutes" type="number" defaultValue="60" /></label>
+        <label>Werkgebieden, gescheiden door komma<textarea name="areas" /></label>
+        <label>Uitgesloten gebieden<textarea name="excluded" /></label>
+        <label>Voorkeuren<textarea name="preferences" /></label>
+        <button type="submit">Expert opslaan</button>
+      </form>
+
+      <section className="card" style={{ marginTop: 20 }}>
+        <h1>Experts</h1>
+        {experts?.length ? experts.map((expert) => (
+          <p key={expert.id}>
+            <strong>{expert.name}</strong> · {String(expert.start_time).slice(0, 5)}–{String(expert.end_time).slice(0, 5)} · {expert.default_visit_minutes} min bezoek
+          </p>
+        )) : <p>Geen experts.</p>}
+      </section>
+    </main>
+  );
+}
