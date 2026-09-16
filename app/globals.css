@@ -17,3 +17,4 @@ table { border-collapse:separate; border-spacing:0; width:100%; margin:16px 0; t
 .calendar-head>.day-label,.calendar-row>.day-label{position:sticky;left:0;z-index:3;box-shadow:3px 0 8px #0000000d}.calendar-head>.day-label{background:#181818;color:#fff;z-index:4}
 .day-experts{font-size:.72rem;line-height:1.25;color:#075f51;font-weight:700}
 .travel-block{position:absolute;min-width:28px;height:18px;padding:1px 3px;overflow:hidden;border:1px dashed #90a0b4;border-radius:4px;background:#f5f7fa;color:#526176;font-size:.62rem;font-weight:800;line-height:14px;white-space:nowrap;z-index:2}
+.lunch-block{position:absolute;height:16px;padding:1px 4px;overflow:hidden;border-radius:4px;background:#fff4d6;color:#8a5900;font-size:.62rem;font-weight:800;line-height:14px;white-space:nowrap;z-index:1}

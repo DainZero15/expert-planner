@@ -8,6 +8,7 @@ import { googleMapsRouteLinks, type RouteStop } from "@/lib/planning/google-maps
 import { PlanningDragList } from "@/components/planning-drag-list";
 import { PlanningDropTarget } from "@/components/planning-drop-target";
 import { estimatedDurationMinutes } from "@/lib/planning/duration";
+import { lunchEnd, lunchStart } from "@/lib/planning/workday";
 
 const hours = Array.from({ length: 24 }, (_, index) => index);
 const deliveryDays = [1, 2, 3, 4, 5, 6, 7];
@@ -166,6 +167,7 @@ export default async function PlanningPage({ searchParams }: { searchParams: Pro
           const items = byDay.get(key) || [];
           const dailyExpertIds = [...new Set(items.map((appointment) => appointment.expert_id || "team"))];
           const dailyExperts = dailyExpertIds.map((expertId) => expertId === "team" ? "Team" : expertNames.get(expertId) || "Expert");
+          const lunchBlocks = dailyExpertIds.map((expertId, lane) => ({ expertId, lane }));
           const travelSegments = items.flatMap((appointment) => {
             const expertId = appointment.expert_id || "team";
             const nextAppointment = items
@@ -205,6 +207,7 @@ export default async function PlanningPage({ searchParams }: { searchParams: Pro
               {travelSegments.map((travel) => <div key={travel.id} className="travel-block" style={{ left: `${Math.max(0, travel.startMinutes) / 60 / hours.length * 100}%`, top: `${26 + dailyExpertIds.indexOf(travel.expertId) * 62}px`, width: `calc(${travel.minutes / 60 / hours.length * 100}% - 2px)` }}>
                 Reis ±{travel.minutes}m
               </div>)}
+              {lunchBlocks.map((lunch) => <div key={`${lunch.expertId}-lunch`} className="lunch-block" style={{ left: `${lunchStart / 60 / hours.length * 100}%`, top: `${42 + lunch.lane * 62}px`, width: `calc(${(lunchEnd - lunchStart) / 60 / hours.length * 100}% - 3px)` }}>Pauze · 60m</div>)}
             </PlanningDropTarget>
           </div>;
         })}

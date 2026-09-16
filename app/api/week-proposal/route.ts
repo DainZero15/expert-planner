@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { addDays, amsterdamDate, dateKey, mondayOfWeek } from "@/lib/planning/week";
 import { estimatedDurationMinutes } from "@/lib/planning/duration";
 import { normalizedOrderNumber } from "@/lib/import/customers";
+import { estimatedTravelMinutes, hasRoomForVisit, nextWorkableStart, workdayStart } from "@/lib/planning/workday";
 
 type Expert = {
   id: string;
@@ -32,7 +33,6 @@ type Customer = {
 
 const baseProposalDays = [2, 3, 4, 5, 6];
 const proposalWeeks = 12;
-const estimatedTravelMinutes = 15;
 const minuteOfDay = (time: string) => {
   const [hours = "8", minutes = "0"] = time.slice(0, 5).split(":");
   return Number(hours) * 60 + Number(minutes);
@@ -124,7 +124,7 @@ export async function POST(request: Request) {
   const nextAvailable = new Map<string, Map<string, number>>();
   for (const expert of experts) {
     const expertSlots = new Map<string, number>();
-    for (const day of days) expertSlots.set(day.date, minuteOfDay(expert.start_time));
+    for (const day of days) expertSlots.set(day.date, workdayStart);
     nextAvailable.set(expert.id, expertSlots);
   }
   for (const appointment of confirmed) {
@@ -152,9 +152,10 @@ export async function POST(request: Request) {
         // the normal Tuesday–Saturday proposal days instead of skipping them.
         if (expert.work_days?.length && !expert.work_days.includes(day.dayNumber)) continue;
         if (customer?.available_days?.length && !customer.available_days.includes(day.dayNumber)) continue;
-        const start = nextAvailable.get(expert.id)?.get(day.date) || minuteOfDay(expert.start_time);
+        const available = nextAvailable.get(expert.id)?.get(day.date) || workdayStart;
         const duration = estimatedDurationMinutes(order.work_type, order.duration_minutes, expert.default_visit_minutes);
-        if (start + duration > minuteOfDay(expert.end_time)) continue;
+        const start = nextWorkableStart(available, duration);
+        if (!hasRoomForVisit(start, duration)) continue;
         if (!choice || start < choice.start) choice = { expert, dayIndex, start, duration };
       }
     }
@@ -169,11 +170,11 @@ export async function POST(request: Request) {
     const day = days[dayIndex];
     // Reserve a visible travel buffer after every visit. It is a local
     // planning estimate until real driving times are connected later.
-    slots?.set(day.date, start + duration + estimatedTravelMinutes + expert.break_minutes);
+    slots?.set(day.date, start + duration + estimatedTravelMinutes);
 
     for (let rank = 1; rank <= 3; rank += 1) {
       const optionDay = days[(dayIndex + rank - 1) % days.length];
-      const optionStart = rank === 1 ? start : minuteOfDay(expert.start_time);
+      const optionStart = rank === 1 ? start : workdayStart;
       proposals.push({
         customer_id: order.customer_id,
         expert_id: expert.id,
