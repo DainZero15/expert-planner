@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { addDays, amsterdamDate, dateKey, formatTime, mondayOfWeek, weekLabel } from "@/lib/planning/week";
+import { normalizedOrderNumber } from "@/lib/import/customers";
 
 const hours = Array.from({ length: 10 }, (_, index) => index + 8);
 const deliveryDays = [1, 2, 3, 4, 5, 6, 7];
@@ -51,6 +52,13 @@ export default async function PlanningPage({ searchParams }: { searchParams: Pro
   const confirmed = appointments.filter((appointment) => appointment.status === "confirmed");
   const confirmedOrderIds = new Set(confirmed.map((appointment) => appointment.order_id).filter(Boolean));
   const todo = orders.filter((order) => !confirmedOrderIds.has(order.id));
+  const todoByNumber = new Map<string, Order>();
+  for (const order of todo) {
+    const orderKey = order.source_order_number ? normalizedOrderNumber(order.source_order_number) : order.id;
+    if (!todoByNumber.has(orderKey)) todoByNumber.set(orderKey, order);
+  }
+  const uniqueTodo = [...todoByNumber.values()];
+  const hiddenDuplicates = todo.length - uniqueTodo.length;
   const byDay = new Map<string, typeof appointments>();
   for (const appointment of appointments) {
     const key = amsterdamDate(new Date(appointment.starts_at));
@@ -128,8 +136,9 @@ export default async function PlanningPage({ searchParams }: { searchParams: Pro
 
       <article className="card">
         <div className="eyebrow">Nog te doen</div>
-        <h2>Nog niet definitief ({todo.length})</h2>
-        {todo.length ? <ul className="customer-list">{todo.slice(0, 100).map((order) => {
+        <h2>Nog niet definitief ({uniqueTodo.length})</h2>
+        {hiddenDuplicates > 0 && <p className="muted">{hiddenDuplicates} dubbele importregel{hiddenDuplicates === 1 ? "" : "s"} is verborgen; elk ordernummer staat maar één keer in deze lijst.</p>}
+        {uniqueTodo.length ? <ul className="customer-list">{uniqueTodo.slice(0, 100).map((order) => {
           const customer = customers.get(order.customer_id);
           return <li key={order.id}>
             <Link href={`/planning/order/${order.id}` as never}>

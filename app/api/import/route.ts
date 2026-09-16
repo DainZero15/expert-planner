@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
-import { parseFile, draftSchema } from "@/lib/import/customers";
+import { normalizedOrderNumber, parseFile, draftSchema } from "@/lib/import/customers";
 
 const customerKey = (row: { name: string; addressLine: string; postalCode: string | null; city: string | null }) => [row.name, row.addressLine, row.postalCode, row.city].map((value) => String(value || "").trim().toLocaleLowerCase("nl-NL").replace(/\s+/g, " ")).join("|");
 
@@ -34,11 +34,16 @@ export async function PUT(request: Request) {
     if (error) return NextResponse.json({ error: `Klanten opslaan mislukt: ${error.message}` }, { status: 500 });
     for (const customer of created || []) customerIds.set(customerKey({ name: customer.name, addressLine: customer.address_line, postalCode: customer.postal_code, city: customer.city }), customer.id);
   }
-  const numbers = rows.flatMap((row) => row.orderNumber ? [row.orderNumber] : []);
-  const { data: existingOrders, error: orderReadError } = numbers.length ? await db.from("orders").select("source_order_number").in("source_order_number", numbers) : { data: [], error: null };
+  const { data: existingOrders, error: orderReadError } = await db.from("orders").select("source_order_number").limit(5000);
   if (orderReadError) return NextResponse.json({ error: `Orders controleren mislukt: ${orderReadError.message}` }, { status: 500 });
-  const knownOrders = new Set((existingOrders || []).map((order) => order.source_order_number));
-  const newOrders = rows.filter((row) => row.orderNumber && !knownOrders.has(row.orderNumber));
+  const knownOrders = new Set((existingOrders || []).flatMap((order) => order.source_order_number ? [normalizedOrderNumber(order.source_order_number)] : []));
+  const newOrders = rows.filter((row) => {
+    if (!row.orderNumber) return false;
+    const orderKey = normalizedOrderNumber(row.orderNumber);
+    if (knownOrders.has(orderKey)) return false;
+    knownOrders.add(orderKey);
+    return true;
+  });
   if (newOrders.length) {
     const { error } = await db.from("orders").insert(newOrders.map((row) => ({ source_order_number: row.orderNumber, customer_id: customerIds.get(customerKey(row)), work_type: row.workType, duration_minutes: row.durationMinutes, required_people: row.requiredPeople || 1, metadata: { imported_via: "vendit" } })));
     if (error) return NextResponse.json({ error: `Orders opslaan mislukt: ${error.message}` }, { status: 500 });

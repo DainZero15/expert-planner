@@ -9,6 +9,7 @@ const aliases: Record<string, string[]> = {
   name: ["naam", "klantnaam", "bedrijfsnaam", "contactpersoon", "contact persoon", "contactnaam", "naam contactpersoon", "voor en achternaam", "volledige naam"], addressLine: ["adres", "straat", "address"], customerNumber: ["klantnummer", "debiteurnummer"], orderNumber: ["ordernummer", "opdrachtnummer", "opdrachtid", "opdracht-id", "order id", "identificatie"], postalCode: ["postcode"], city: ["plaats", "woonplaats", "city"], email: ["email", "emailadres", "mailadres", "e-mailadres"], phone: ["telefoon", "telefoonnummer", "phone"], workType: ["taak", "werkzaamheden", "werksoort", "soort werkzaamheden", "type werk"], durationMinutes: ["duur min", "duur minuten", "duur(min)", "duur"], requiredPeople: ["personen nodig", "aantal personen", "monteurs nodig"],
 };
 const key = (value: string) => value.toLocaleLowerCase("nl-NL").replace(/[^a-z0-9]/g, "");
+export const normalizedOrderNumber = (value: string) => key(value);
 
 export function parseFile(buffer: ArrayBuffer) {
   const workbook = XLSX.read(buffer, { type: "array", raw: false });
@@ -38,8 +39,8 @@ export function parseFile(buffer: ArrayBuffer) {
     if (!addressLine) issues.push("Adres ontbreekt");
     if (!orderNumber) issues.push("Ordernummer ontbreekt");
     if (email && !z.string().email().safeParse(email).success) issues.push("E-mailadres is ongeldig");
-    if (orderNumber && seenOrders.has(orderNumber.toLocaleLowerCase("nl-NL"))) issues.push("Dubbel ordernummer in bestand");
-    if (orderNumber) seenOrders.add(orderNumber.toLocaleLowerCase("nl-NL"));
+    if (orderNumber && seenOrders.has(normalizedOrderNumber(orderNumber))) issues.push("Dubbel ordernummer in bestand");
+    if (orderNumber) seenOrders.add(normalizedOrderNumber(orderNumber));
     return { name, addressLine, customerNumber: text(row, "customerNumber"), orderNumber, postalCode: text(row, "postalCode"), city: text(row, "city"), email, phone: text(row, "phone"), workType: text(row, "workType"), durationMinutes, requiredPeople, issues };
   });
   return { columns, drafts };
