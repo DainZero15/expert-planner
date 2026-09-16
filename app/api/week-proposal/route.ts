@@ -75,7 +75,11 @@ export async function POST(request: Request) {
     : { data: [] as Customer[] };
   const customers = new Map((customerData ?? []).map((customer) => [customer.id, customer as Customer]));
 
-  await db.from("appointments").delete().in("order_id", orders.map((order) => order.id)).eq("status", "proposed");
+  const orderIds = orders.map((order) => order.id);
+  if (orderIds.length) {
+    const { error: deleteError } = await db.from("appointments").delete().in("order_id", orderIds).eq("status", "proposed");
+    if (deleteError) return NextResponse.redirect(new URL(`/planning?week=${week}&proposal=error`, request.url), 303);
+  }
 
   // A full order backlog rarely fits in one week. Create a proposal from the
   // selected week onward, so the planner continues into following weeks while
@@ -148,6 +152,10 @@ export async function POST(request: Request) {
     planned += 1;
   }
 
-  if (proposals.length) await db.from("appointments").insert(proposals);
+  if (proposals.length) {
+    const { error: insertError } = await db.from("appointments").insert(proposals);
+    // Do not report a successful proposal when the database rejected it.
+    if (insertError) return NextResponse.redirect(new URL(`/planning?week=${week}&proposal=error`, request.url), 303);
+  }
   return NextResponse.redirect(new URL(`/planning?week=${week}&proposal=${planned}&skipped=${skipped}`, request.url), 303);
 }

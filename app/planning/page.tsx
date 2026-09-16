@@ -5,6 +5,8 @@ import { addDays, amsterdamDate, dateKey, formatTime, mondayOfWeek, weekLabel } 
 import { normalizedOrderNumber } from "@/lib/import/customers";
 import { WeekProposalButton } from "@/components/week-proposal-button";
 import { googleMapsRouteLinks, type RouteStop } from "@/lib/planning/google-maps";
+import { PlanningDragList } from "@/components/planning-drag-list";
+import { PlanningDropTarget } from "@/components/planning-drop-target";
 
 const hours = Array.from({ length: 24 }, (_, index) => index);
 const deliveryDays = [1, 2, 3, 4, 5, 6, 7];
@@ -76,6 +78,14 @@ export default async function PlanningPage({ searchParams }: { searchParams: Pro
     if (!todoByNumber.has(orderKey)) todoByNumber.set(orderKey, order);
   }
   const uniqueOrders = [...todoByNumber.values()];
+  const draggableOrders = uniqueOrders.map((order) => {
+    const customer = customers.get(order.customer_id);
+    return {
+      id: order.id,
+      title: customer?.name || "Klant zonder naam",
+      detail: `${order.source_order_number || "zonder ordernummer"} · ${customer?.city || "plaats onbekend"}`,
+    };
+  });
   const todoByCustomer = new Map<string, { order: Order; count: number; customer: Customer | undefined }>();
   for (const order of uniqueOrders) {
     const customer = customers.get(order.customer_id);
@@ -141,8 +151,9 @@ export default async function PlanningPage({ searchParams }: { searchParams: Pro
       <Link href={`/planning?week=${next}` as never}>Volgende week →</Link>
     </section>
 
-    <div className="calendar-scroll">
-      <section className="week-calendar" aria-label="Weekplanner">
+    <div className="planner-board">
+      <div className="calendar-scroll">
+        <section className="week-calendar" aria-label="Weekplanner">
         <div className="calendar-head">
           <div className="day-label">Dag</div>
           {hours.map((hour) => <div key={hour}>{String(hour).padStart(2, "0")}:00</div>)}
@@ -157,7 +168,7 @@ export default async function PlanningPage({ searchParams }: { searchParams: Pro
               <strong>{dayName.format(day)}</strong>
               <span>{items.length ? `${items.length} afspraak${items.length === 1 ? "" : "en"}` : isExceptionDay ? "Op aanvraag" : "Vrij"}</span>
             </div>
-            <div className="calendar-track">
+            <PlanningDropTarget date={key}>
               {hours.map((hour) => <div className="hour-cell" key={hour} />)}
               {items.map((appointment) => {
                 const start = Number(formatTime(appointment.starts_at).slice(0, 2));
@@ -168,10 +179,12 @@ export default async function PlanningPage({ searchParams }: { searchParams: Pro
                   <span>{formatTime(appointment.starts_at)}</span>
                 </Link>;
               })}
-            </div>
+            </PlanningDropTarget>
           </div>;
         })}
-      </section>
+        </section>
+      </div>
+      <PlanningDragList orders={draggableOrders} />
     </div>
 
     {routeGroups.size > 0 && <section className="card route-links">
