@@ -16,7 +16,7 @@ export default async function PlanningPage({ searchParams }: { searchParams: Pro
   const monday = mondayOfWeek(validDate(params.week));
   const end = addDays(monday, 7);
   const [{ data: orderData, error: orderError }, { data: appointmentData }] = await Promise.all([
-    db.from("orders").select("id,source_order_number,customer_id,work_type,duration_minutes,required_people,status,customers(name,address_line,postal_code,city),order_experts(expert_id)").order("created_at", { ascending: false }).limit(500),
+    db.from("orders").select("id,source_order_number,customer_id,work_type,duration_minutes,required_people,status,customers(name,address_line,postal_code,city)").order("created_at", { ascending: false }).limit(500),
     db.from("appointments").select("id,order_id,customer_id,starts_at,ends_at,status,customers(name,address_line,city),experts(name)").gte("starts_at", `${dateKey(monday)}T00:00:00.000Z`).lt("starts_at", `${dateKey(end)}T00:00:00.000Z`).order("starts_at"),
   ]);
   const orders = orderData ?? [];
