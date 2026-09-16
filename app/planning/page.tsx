@@ -43,7 +43,7 @@ type Appointment = {
   status: string;
 };
 
-export default async function PlanningPage({ searchParams }: { searchParams: Promise<{ week?: string; proposal?: string; skipped?: string }> }) {
+export default async function PlanningPage({ searchParams }: { searchParams: Promise<{ week?: string; proposal?: string; skipped?: string; duplicates?: string }> }) {
   const db = await createClient();
   const { data: { user } } = await db.auth.getUser();
   if (!user) redirect("/login");
@@ -55,7 +55,7 @@ export default async function PlanningPage({ searchParams }: { searchParams: Pro
   // Orders are deliberately read without a nested relation. This keeps the
   // backlog visible even while team selection is still being set up.
   const [{ data: orderData, error: orderError }, { data: appointmentData }, { data: expertData }] = await Promise.all([
-    db.from("orders").select("id,source_order_number,customer_id,work_type,duration_minutes,required_people,status").order("created_at", { ascending: false }).limit(500),
+    db.from("orders").select("id,source_order_number,customer_id,work_type,duration_minutes,required_people,status").neq("status", "archived").order("created_at", { ascending: false }).limit(500),
     db.from("appointments").select("id,order_id,customer_id,expert_id,starts_at,ends_at,selection_rank,status").gte("starts_at", `${dateKey(monday)}T00:00:00.000Z`).lt("starts_at", `${dateKey(end)}T00:00:00.000Z`).order("starts_at"),
     db.from("experts").select("id,name").order("name"),
   ]);
@@ -71,7 +71,7 @@ export default async function PlanningPage({ searchParams }: { searchParams: Pro
   const appointments = (appointmentData ?? []) as Appointment[];
   const expertNames = new Map((expertData ?? []).map((expert) => [expert.id, expert.name]));
   const confirmed = appointments.filter((appointment) => appointment.status === "confirmed");
-  const visibleAppointments = appointments.filter((appointment) => appointment.status === "confirmed" || appointment.selection_rank === 1);
+  const visibleAppointments = appointments.filter((appointment) => (appointment.status === "confirmed" || appointment.selection_rank === 1) && (!appointment.order_id || ordersById.has(appointment.order_id)));
   const confirmedOrderIds = new Set(confirmed.map((appointment) => appointment.order_id).filter(Boolean));
   const todo = orders.filter((order) => !confirmedOrderIds.has(order.id));
   const todoByNumber = new Map<string, Order>();
@@ -140,7 +140,7 @@ export default async function PlanningPage({ searchParams }: { searchParams: Pro
     {params.proposal && <section className={params.proposal === "error" ? "card error" : "card proposal-result"} style={{ marginTop: 20 }}>
       {params.proposal === "error"
         ? "Het weekvoorstel kon niet in Supabase worden opgeslagen. Controleer de rechten voor de tabel appointments en probeer daarna opnieuw."
-        : <>Voorstel klaar: <strong>{params.proposal}</strong> orders hebben Plan A, B en C gekregen, vanaf deze week en waar nodig in de volgende weken. {Number(params.skipped || 0) > 0 && `${params.skipped} orders konden nog niet worden gekoppeld aan een beschikbare expert.`}</>}
+        : <>Voorstel klaar: <strong>{params.proposal}</strong> orders hebben Plan A, B en C gekregen, vanaf deze week en waar nodig in de volgende weken. {Number(params.duplicates || 0) > 0 && `${params.duplicates} dubbele order${Number(params.duplicates) === 1 ? " is" : "s zijn"} automatisch gearchiveerd.`} {Number(params.skipped || 0) > 0 && `${params.skipped} orders konden nog niet worden gekoppeld aan een beschikbare expert.`}</>}
     </section>}
 
     {orderError && <section className="card error" style={{ marginTop: 20 }}>

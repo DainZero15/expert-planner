@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { addDays, amsterdamDate, dateKey, mondayOfWeek } from "@/lib/planning/week";
 import { estimatedDurationMinutes } from "@/lib/planning/duration";
+import { normalizedOrderNumber } from "@/lib/import/customers";
 
 type Expert = {
   id: string;
@@ -15,10 +16,13 @@ type Expert = {
 
 type Order = {
   id: string;
+  source_order_number: string | null;
   customer_id: string;
   work_type: string | null;
   duration_minutes: number | null;
   required_people: number;
+  status: string;
+  created_at: string;
 };
 
 type Customer = {
@@ -61,7 +65,7 @@ export async function POST(request: Request) {
   const week = dateKey(monday);
 
   const [{ data: orderData, error: orderError }, { data: expertData }, { data: confirmedData }] = await Promise.all([
-    db.from("orders").select("id,customer_id,work_type,duration_minutes,required_people").limit(1000),
+    db.from("orders").select("id,source_order_number,customer_id,work_type,duration_minutes,required_people,status,created_at").order("created_at").limit(1000),
     db.from("experts").select("id,work_days,start_time,end_time,break_minutes,default_visit_minutes,preferences").order("name"),
     db.from("appointments").select("id,order_id,expert_id,starts_at,ends_at,status").eq("status", "confirmed"),
   ]);
@@ -69,7 +73,34 @@ export async function POST(request: Request) {
 
   const confirmed = confirmedData ?? [];
   const confirmedOrderIds = new Set(confirmed.map((appointment) => appointment.order_id).filter(Boolean));
-  const orders = ((orderData ?? []) as Order[]).filter((order) => !confirmedOrderIds.has(order.id));
+  const activeOrders = ((orderData ?? []) as Order[]).filter((order) => order.status !== "archived");
+  const canonicalOrders = new Map<string, Order>();
+  const duplicateOrderIds: string[] = [];
+  for (const order of activeOrders) {
+    const key = order.source_order_number ? normalizedOrderNumber(order.source_order_number) : order.id;
+    const current = canonicalOrders.get(key);
+    if (!current) {
+      canonicalOrders.set(key, order);
+      continue;
+    }
+    // Never archive a second order when both copies already have a confirmed
+    // appointment. Those need a human check instead of an automatic change.
+    if (confirmedOrderIds.has(order.id) && confirmedOrderIds.has(current.id)) continue;
+    // A confirmed appointment wins over an older duplicate. Otherwise keep the
+    // oldest import as the single active order.
+    if (confirmedOrderIds.has(order.id) && !confirmedOrderIds.has(current.id)) {
+      duplicateOrderIds.push(current.id);
+      canonicalOrders.set(key, order);
+    } else duplicateOrderIds.push(order.id);
+  }
+  if (duplicateOrderIds.length) {
+    const [{ error: archiveError }, { error: proposalCleanupError }] = await Promise.all([
+      db.from("orders").update({ status: "archived" }).in("id", duplicateOrderIds),
+      db.from("appointments").delete().in("order_id", duplicateOrderIds).eq("status", "proposed"),
+    ]);
+    if (archiveError || proposalCleanupError) return NextResponse.redirect(new URL(`/planning?week=${week}&proposal=error`, request.url), 303);
+  }
+  const orders = [...canonicalOrders.values()].filter((order) => !confirmedOrderIds.has(order.id));
   const experts = (expertData ?? []) as Expert[];
   const customerIds = [...new Set(orders.map((order) => order.customer_id))];
   const { data: customerData } = customerIds.length
@@ -161,5 +192,5 @@ export async function POST(request: Request) {
     // Do not report a successful proposal when the database rejected it.
     if (insertError) return NextResponse.redirect(new URL(`/planning?week=${week}&proposal=error`, request.url), 303);
   }
-  return NextResponse.redirect(new URL(`/planning?week=${week}&proposal=${planned}&skipped=${skipped}`, request.url), 303);
+  return NextResponse.redirect(new URL(`/planning?week=${week}&proposal=${planned}&skipped=${skipped}&duplicates=${duplicateOrderIds.length}`, request.url), 303);
 }
