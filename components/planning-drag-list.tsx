@@ -13,8 +13,8 @@ export function PlanningDragList({ orders }: { orders: DraggableOrder[] }) {
 
   return <aside className="card draggable-orders">
     <div className="eyebrow">Handmatig plannen</div>
-    <h2>Orders slepen ({orders.length})</h2>
-    <p className="muted">Sleep een order naar de gewenste dag in de weekplanner. De bestaande tijd blijft staan; de dag verandert.</p>
+    <h2>Klantgroepen slepen ({orders.length})</h2>
+    <p className="muted">Dezelfde klant op hetzelfde adres staat hier één keer. Sleep de groep naar de gewenste dag in de weekplanner.</p>
     <div className="draggable-order-list">
       {orders.map((order) => <article
         className={`draggable-order ${dragging === order.id ? "is-dragging" : ""}`}

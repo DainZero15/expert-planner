@@ -81,14 +81,6 @@ export default async function PlanningPage({ searchParams }: { searchParams: Pro
     if (!todoByNumber.has(orderKey)) todoByNumber.set(orderKey, order);
   }
   const uniqueOrders = [...todoByNumber.values()];
-  const draggableOrders = uniqueOrders.map((order) => {
-    const customer = customers.get(order.customer_id);
-    return {
-      id: order.id,
-      title: customer?.name || "Klant zonder naam",
-      detail: `${order.source_order_number || "zonder ordernummer"} · ${customer?.city || "plaats onbekend"}`,
-    };
-  });
   const todoByCustomer = new Map<string, { order: Order; count: number; customer: Customer | undefined }>();
   for (const order of uniqueOrders) {
     const customer = customers.get(order.customer_id);
@@ -100,6 +92,11 @@ export default async function PlanningPage({ searchParams }: { searchParams: Pro
     else todoByCustomer.set(customerKey, { order, count: 1, customer });
   }
   const todoGroups = [...todoByCustomer.values()];
+  const draggableOrders = todoGroups.map(({ order, count, customer }) => ({
+    id: order.id,
+    title: customer?.name || "Klant zonder naam",
+    detail: `${count} open order${count === 1 ? "" : "s"} · ${customer?.address_line || customer?.city || "adres onbekend"}`,
+  }));
   const hiddenDuplicates = todo.length - todoGroups.length;
   const byDay = new Map<string, typeof visibleAppointments>();
   for (const appointment of visibleAppointments) {
