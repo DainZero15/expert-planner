@@ -4,8 +4,9 @@ import { createClient } from "@/lib/supabase/server";
 import { addDays, amsterdamDate, dateKey, formatTime, mondayOfWeek, weekLabel } from "@/lib/planning/week";
 import { normalizedOrderNumber } from "@/lib/import/customers";
 import { WeekProposalButton } from "@/components/week-proposal-button";
+import { googleMapsRouteLinks, type RouteStop } from "@/lib/planning/google-maps";
 
-const hours = Array.from({ length: 10 }, (_, index) => index + 8);
+const hours = Array.from({ length: 24 }, (_, index) => index);
 const deliveryDays = [1, 2, 3, 4, 5, 6, 7];
 const dayName = new Intl.DateTimeFormat("nl-NL", { weekday: "long", day: "numeric", month: "short" });
 const validDate = (value: unknown) => typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : amsterdamDate(new Date());
@@ -28,6 +29,17 @@ type Customer = {
   city: string | null;
 };
 
+type Appointment = {
+  id: string;
+  order_id: string | null;
+  customer_id: string;
+  expert_id: string | null;
+  starts_at: string;
+  ends_at: string;
+  selection_rank: number | null;
+  status: string;
+};
+
 export default async function PlanningPage({ searchParams }: { searchParams: Promise<{ week?: string; proposal?: string; skipped?: string }> }) {
   const db = await createClient();
   const { data: { user } } = await db.auth.getUser();
@@ -39,9 +51,10 @@ export default async function PlanningPage({ searchParams }: { searchParams: Pro
 
   // Orders are deliberately read without a nested relation. This keeps the
   // backlog visible even while team selection is still being set up.
-  const [{ data: orderData, error: orderError }, { data: appointmentData }] = await Promise.all([
+  const [{ data: orderData, error: orderError }, { data: appointmentData }, { data: expertData }] = await Promise.all([
     db.from("orders").select("id,source_order_number,customer_id,work_type,duration_minutes,required_people,status").order("created_at", { ascending: false }).limit(500),
-    db.from("appointments").select("id,order_id,customer_id,starts_at,ends_at,selection_rank,status").gte("starts_at", `${dateKey(monday)}T00:00:00.000Z`).lt("starts_at", `${dateKey(end)}T00:00:00.000Z`).order("starts_at"),
+    db.from("appointments").select("id,order_id,customer_id,expert_id,starts_at,ends_at,selection_rank,status").gte("starts_at", `${dateKey(monday)}T00:00:00.000Z`).lt("starts_at", `${dateKey(end)}T00:00:00.000Z`).order("starts_at"),
+    db.from("experts").select("id,name").order("name"),
   ]);
 
   const orders = (orderData ?? []) as Order[];
@@ -51,7 +64,8 @@ export default async function PlanningPage({ searchParams }: { searchParams: Pro
     : { data: [] as Customer[] };
   const customers = new Map((customerData ?? []).map((customer) => [customer.id, customer as Customer]));
 
-  const appointments = appointmentData ?? [];
+  const appointments = (appointmentData ?? []) as Appointment[];
+  const expertNames = new Map((expertData ?? []).map((expert) => [expert.id, expert.name]));
   const confirmed = appointments.filter((appointment) => appointment.status === "confirmed");
   const visibleAppointments = appointments.filter((appointment) => appointment.status === "confirmed" || appointment.selection_rank === 1);
   const confirmedOrderIds = new Set(confirmed.map((appointment) => appointment.order_id).filter(Boolean));
@@ -79,6 +93,16 @@ export default async function PlanningPage({ searchParams }: { searchParams: Pro
     const key = amsterdamDate(new Date(appointment.starts_at));
     byDay.set(key, [...(byDay.get(key) || []), appointment]);
   }
+  const routeGroups = new Map<string, { date: string; expertName: string; stops: RouteStop[] }>();
+  for (const appointment of visibleAppointments) {
+    const customer = customers.get(appointment.customer_id);
+    if (!customer?.address_line) continue;
+    const date = amsterdamDate(new Date(appointment.starts_at));
+    const groupKey = `${date}:${appointment.expert_id || "team"}`;
+    const group: { date: string; expertName: string; stops: RouteStop[] } = routeGroups.get(groupKey) || { date, expertName: appointment.expert_id ? expertNames.get(appointment.expert_id) || "Expert" : "Team", stops: [] };
+    group.stops.push({ addressLine: customer.address_line, postalCode: customer.postal_code, city: customer.city });
+    routeGroups.set(groupKey, group);
+  }
 
   const previous = dateKey(addDays(monday, -7));
   const next = dateKey(addDays(monday, 7));
@@ -93,7 +117,7 @@ export default async function PlanningPage({ searchParams }: { searchParams: Pro
       <div>
         <div className="eyebrow">Weekplanner</div>
         <h1>Uw week in één oogopslag</h1>
-        <p className="muted">Dagen staan onder elkaar en uren lopen van links naar rechts. Maandag en zondag zijn beschikbaar voor uitzonderingen.</p>
+        <p className="muted">Dagen staan onder elkaar en alle 24 uren lopen van links naar rechts. Scroll horizontaal voor 00:00–00:00; maandag en zondag zijn beschikbaar voor uitzonderingen.</p>
       </div>
       <div className="planner-actions">
         <WeekProposalButton week={dateKey(monday)} />
@@ -104,7 +128,7 @@ export default async function PlanningPage({ searchParams }: { searchParams: Pro
     {params.proposal && <section className={params.proposal === "error" ? "card error" : "card proposal-result"} style={{ marginTop: 20 }}>
       {params.proposal === "error"
         ? "Het weekvoorstel kon niet worden opgeslagen. Controleer of er experts met werksoorten zijn ingesteld."
-        : <>Weekvoorstel klaar: <strong>{params.proposal}</strong> orders hebben Plan A, B en C gekregen. {Number(params.skipped || 0) > 0 && `${params.skipped} orders konden nog niet worden gekoppeld aan een beschikbare expert.`}</>}
+        : <>Voorstel klaar: <strong>{params.proposal}</strong> orders hebben Plan A, B en C gekregen, vanaf deze week en waar nodig in de volgende weken. {Number(params.skipped || 0) > 0 && `${params.skipped} orders konden nog niet worden gekoppeld aan een beschikbare expert.`}</>}
     </section>}
 
     {orderError && <section className="card error" style={{ marginTop: 20 }}>
@@ -137,8 +161,9 @@ export default async function PlanningPage({ searchParams }: { searchParams: Pro
               {hours.map((hour) => <div className="hour-cell" key={hour} />)}
               {items.map((appointment) => {
                 const start = Number(formatTime(appointment.starts_at).slice(0, 2));
+                const durationMinutes = Math.max(30, (new Date(appointment.ends_at).getTime() - new Date(appointment.starts_at).getTime()) / 60_000);
                 const href = appointment.order_id ? `/planning/order/${appointment.order_id}` : `/planning/customer/${appointment.customer_id}`;
-                return <Link key={appointment.id} href={href as never} className={`appointment ${appointment.status === "confirmed" ? "confirmed" : "proposal"}`} style={{ left: `${Math.max(0, start - 8) * 10}%` }}>
+                return <Link key={appointment.id} href={href as never} className={`appointment ${appointment.status === "confirmed" ? "confirmed" : "proposal"}`} style={{ left: `${Math.max(0, start) / hours.length * 100}%`, width: `calc(${Math.min(100 - Math.max(0, start) / hours.length * 100, durationMinutes / 60 / hours.length * 100)}% - 7px)` }}>
                   <strong>Ingepland bezoek</strong>
                   <span>{formatTime(appointment.starts_at)}</span>
                 </Link>;
@@ -148,6 +173,13 @@ export default async function PlanningPage({ searchParams }: { searchParams: Pro
         })}
       </section>
     </div>
+
+    {routeGroups.size > 0 && <section className="card route-links">
+      <div className="eyebrow">Navigatie</div>
+      <h2>Google Maps dagroutes</h2>
+      <p className="muted">De stops staan in dezelfde volgorde als het voorstel. Google Maps opent vanaf de actuele locatie; lange routes worden automatisch verdeeld in korte delen.</p>
+      <div className="route-link-list">{[...routeGroups.values()].map((group) => googleMapsRouteLinks(group.stops).map((route) => <a key={`${group.date}-${group.expertName}-${route.part}`} className="button-link" href={route.href} target="_blank" rel="noreferrer">Open {group.expertName} · {dayName.format(new Date(`${group.date}T12:00:00Z`))} · deel {route.part} ({route.stopCount} stops)</a>))}</div>
+    </section>}
 
     <section className="planner-lists">
       <article className="card">

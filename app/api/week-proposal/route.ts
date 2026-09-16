@@ -26,15 +26,19 @@ type Customer = {
 };
 
 const baseProposalDays = [2, 3, 4, 5, 6];
+const proposalWeeks = 12;
 const minuteOfDay = (time: string) => {
   const [hours = "8", minutes = "0"] = time.slice(0, 5).split(":");
   return Number(hours) * 60 + Number(minutes);
 };
 const hasSkill = (expert: Expert, workType: string | null) => {
-  if (!workType) return true;
   const skills = expert.preferences && typeof expert.preferences === "object" && Array.isArray((expert.preferences as { skills?: unknown }).skills)
     ? (expert.preferences as { skills: unknown[] }).skills.filter((skill): skill is string => typeof skill === "string")
     : [];
+  // An expert without configured work types is intentionally treated as a
+  // general expert. That makes the planner useful while the team is still
+  // being set up, without overriding an explicit specialist mismatch.
+  if (!workType || skills.length === 0) return true;
   const work = workType.toLocaleLowerCase("nl-NL").trim();
   return skills.some((skill) => skill.toLocaleLowerCase("nl-NL").includes(work) || work.includes(skill.toLocaleLowerCase("nl-NL")));
 };
@@ -73,10 +77,13 @@ export async function POST(request: Request) {
 
   await db.from("appointments").delete().in("order_id", orders.map((order) => order.id)).eq("status", "proposed");
 
-  const days = baseProposalDays.map((dayNumber) => ({
+  // A full order backlog rarely fits in one week. Create a proposal from the
+  // selected week onward, so the planner continues into following weeks while
+  // confirmed appointments remain untouched.
+  const days = Array.from({ length: proposalWeeks }, (_, weekIndex) => baseProposalDays.map((dayNumber) => ({
     dayNumber,
-    date: dateKey(addDays(monday, dayNumber - 1)),
-  }));
+    date: dateKey(addDays(monday, weekIndex * 7 + dayNumber - 1)),
+  }))).flat();
   const nextAvailable = new Map<string, Map<string, number>>();
   for (const expert of experts) {
     const expertSlots = new Map<string, number>();
@@ -104,7 +111,9 @@ export async function POST(request: Request) {
     for (const expert of candidates) {
       for (let dayIndex = 0; dayIndex < days.length; dayIndex += 1) {
         const day = days[dayIndex];
-        if (!expert.work_days.includes(day.dayNumber)) continue;
+        // Older expert records may not have work_days yet. In that case use
+        // the normal Tuesday–Saturday proposal days instead of skipping them.
+        if (expert.work_days?.length && !expert.work_days.includes(day.dayNumber)) continue;
         if (customer?.available_days?.length && !customer.available_days.includes(day.dayNumber)) continue;
         const start = nextAvailable.get(expert.id)?.get(day.date) || minuteOfDay(expert.start_time);
         const duration = order.duration_minutes || expert.default_visit_minutes;
