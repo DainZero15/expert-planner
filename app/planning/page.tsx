@@ -7,6 +7,7 @@ import { WeekProposalButton } from "@/components/week-proposal-button";
 import { googleMapsRouteLinks, type RouteStop } from "@/lib/planning/google-maps";
 import { PlanningDragList } from "@/components/planning-drag-list";
 import { PlanningDropTarget } from "@/components/planning-drop-target";
+import { estimatedDurationMinutes } from "@/lib/planning/duration";
 
 const hours = Array.from({ length: 24 }, (_, index) => index);
 const deliveryDays = [1, 2, 3, 4, 5, 6, 7];
@@ -60,6 +61,7 @@ export default async function PlanningPage({ searchParams }: { searchParams: Pro
   ]);
 
   const orders = (orderData ?? []) as Order[];
+  const ordersById = new Map(orders.map((order) => [order.id, order]));
   const customerIds = [...new Set(orders.map((order) => order.customer_id))];
   const { data: customerData } = customerIds.length
     ? await db.from("customers").select("id,name,address_line,postal_code,city").in("id", customerIds)
@@ -162,9 +164,24 @@ export default async function PlanningPage({ searchParams }: { searchParams: Pro
           const day = addDays(monday, weekDay - 1);
           const key = dateKey(day);
           const items = byDay.get(key) || [];
-          const dailyExperts = [...new Set(items.map((appointment) => appointment.expert_id ? expertNames.get(appointment.expert_id) || "Expert" : "Team"))];
+          const dailyExpertIds = [...new Set(items.map((appointment) => appointment.expert_id || "team"))];
+          const dailyExperts = dailyExpertIds.map((expertId) => expertId === "team" ? "Team" : expertNames.get(expertId) || "Expert");
+          const travelSegments = items.flatMap((appointment) => {
+            const expertId = appointment.expert_id || "team";
+            const nextAppointment = items
+              .filter((candidate) => (candidate.expert_id || "team") === expertId && candidate.starts_at > appointment.starts_at)
+              .sort((left, right) => left.starts_at.localeCompare(right.starts_at))[0];
+            if (!nextAppointment) return [];
+            const departure = new Date(appointment.ends_at).getTime();
+            const nextStart = new Date(nextAppointment.starts_at).getTime();
+            const availableMinutes = Math.floor((nextStart - departure) / 60_000);
+            const minutes = Math.min(15, availableMinutes);
+            if (minutes <= 0) return [];
+            const [travelHours, travelMinutes] = formatTime(appointment.ends_at).split(":").map(Number);
+            return [{ id: `${appointment.id}-travel`, expertId, startMinutes: travelHours * 60 + travelMinutes, minutes }];
+          });
           const isExceptionDay = weekDay === 1 || weekDay === 7;
-          return <div className="calendar-row" key={key}>
+          return <div className="calendar-row" key={key} style={{ minHeight: `${Math.max(106, dailyExpertIds.length * 62 + 14)}px` }}>
             <div className="day-label">
               <strong>{dayName.format(day)}</strong>
               <span>{items.length ? `${items.length} afspraak${items.length === 1 ? "" : "en"}` : isExceptionDay ? "Op aanvraag" : "Vrij"}</span>
@@ -175,12 +192,19 @@ export default async function PlanningPage({ searchParams }: { searchParams: Pro
               {items.map((appointment) => {
                 const start = Number(formatTime(appointment.starts_at).slice(0, 2));
                 const durationMinutes = Math.max(30, (new Date(appointment.ends_at).getTime() - new Date(appointment.starts_at).getTime()) / 60_000);
+                const order = appointment.order_id ? ordersById.get(appointment.order_id) : undefined;
+                const estimatedMinutes = estimatedDurationMinutes(order?.work_type, order?.duration_minutes, durationMinutes);
+                const expertLane = dailyExpertIds.indexOf(appointment.expert_id || "team");
                 const href = appointment.order_id ? `/planning/order/${appointment.order_id}` : `/planning/customer/${appointment.customer_id}`;
-                return <Link key={appointment.id} href={href as never} className={`appointment ${appointment.status === "confirmed" ? "confirmed" : "proposal"}`} style={{ left: `${Math.max(0, start) / hours.length * 100}%`, width: `calc(${Math.min(100 - Math.max(0, start) / hours.length * 100, durationMinutes / 60 / hours.length * 100)}% - 7px)` }}>
+                return <Link key={appointment.id} href={href as never} className={`appointment ${appointment.status === "confirmed" ? "confirmed" : "proposal"}`} style={{ left: `${Math.max(0, start) / hours.length * 100}%`, top: `${8 + expertLane * 62}px`, width: `calc(${Math.min(100 - Math.max(0, start) / hours.length * 100, durationMinutes / 60 / hours.length * 100)}% - 7px)` }}>
                   <strong>{customers.get(appointment.customer_id)?.name || "Ingepland bezoek"}</strong>
-                  <span>{formatTime(appointment.starts_at)}</span>
+                  <span className="appointment-task">{order?.work_type || "Werkzaamheden"} · {estimatedMinutes} min</span>
+                  <span>{formatTime(appointment.starts_at)}–{formatTime(appointment.ends_at)}</span>
                 </Link>;
               })}
+              {travelSegments.map((travel) => <div key={travel.id} className="travel-block" style={{ left: `${Math.max(0, travel.startMinutes) / 60 / hours.length * 100}%`, top: `${26 + dailyExpertIds.indexOf(travel.expertId) * 62}px`, width: `calc(${travel.minutes / 60 / hours.length * 100}% - 2px)` }}>
+                Reis ±{travel.minutes}m
+              </div>)}
             </PlanningDropTarget>
           </div>;
         })}

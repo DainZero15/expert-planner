@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { addDays, amsterdamDate, dateKey, mondayOfWeek } from "@/lib/planning/week";
+import { estimatedDurationMinutes } from "@/lib/planning/duration";
 
 type Expert = {
   id: string;
@@ -27,6 +28,7 @@ type Customer = {
 
 const baseProposalDays = [2, 3, 4, 5, 6];
 const proposalWeeks = 12;
+const estimatedTravelMinutes = 15;
 const minuteOfDay = (time: string) => {
   const [hours = "8", minutes = "0"] = time.slice(0, 5).split(":");
   return Number(hours) * 60 + Number(minutes);
@@ -120,7 +122,7 @@ export async function POST(request: Request) {
         if (expert.work_days?.length && !expert.work_days.includes(day.dayNumber)) continue;
         if (customer?.available_days?.length && !customer.available_days.includes(day.dayNumber)) continue;
         const start = nextAvailable.get(expert.id)?.get(day.date) || minuteOfDay(expert.start_time);
-        const duration = order.duration_minutes || expert.default_visit_minutes;
+        const duration = estimatedDurationMinutes(order.work_type, order.duration_minutes, expert.default_visit_minutes);
         if (start + duration > minuteOfDay(expert.end_time)) continue;
         if (!choice || start < choice.start) choice = { expert, dayIndex, start, duration };
       }
@@ -134,7 +136,9 @@ export async function POST(request: Request) {
     const { expert, dayIndex, start, duration } = choice;
     const slots = nextAvailable.get(expert.id);
     const day = days[dayIndex];
-    slots?.set(day.date, start + duration + expert.break_minutes);
+    // Reserve a visible travel buffer after every visit. It is a local
+    // planning estimate until real driving times are connected later.
+    slots?.set(day.date, start + duration + estimatedTravelMinutes + expert.break_minutes);
 
     for (let rank = 1; rank <= 3; rank += 1) {
       const optionDay = days[(dayIndex + rank - 1) % days.length];
