@@ -64,11 +64,13 @@ export default async function OrderPlanningPage({ params }: { params: Promise<{ 
 
     <section className="card" style={{ marginTop: 20 }}>
       <h2>Plan A, B en C</h2>
-      <p className="muted">Een routevoorstel gebruikt straks echte reistijden, de gekozen monteurs en vaste afspraken. Definitief bevestigde afspraken worden nooit automatisch verplaatst.</p>
+      <p className="muted">Dit basisvoorstel houdt rekening met werktijden en werksoorten. Definitief bevestigde afspraken worden nooit automatisch verplaatst. Echte rijtijden voegen we later toe.</p>
       {options.length ? <div className="option-grid">{options.map((option) => <article className="option" key={option.id}>
         <strong>Plan {String.fromCharCode(64 + (option.selection_rank || 1))}</strong>
         <p>{formatTime(option.starts_at)}</p>
-        <span className={option.status === "confirmed" ? "tag" : "muted"}>{option.status === "confirmed" ? "Definitief" : "Voorstel"}</span>
+        {option.status === "confirmed"
+          ? <span className="tag">Definitief</span>
+          : <form action={`/api/orders/${order.id}/confirm`} method="post"><input type="hidden" name="appointmentId" value={option.id} /><button type="submit">Deze optie bevestigen</button></form>}
       </article>)}</div> : <p className="muted">Nog geen routevoorstel voor deze order.</p>}
     </section>
   </main>;

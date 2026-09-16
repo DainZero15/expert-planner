@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { addDays, amsterdamDate, dateKey, formatTime, mondayOfWeek, weekLabel } from "@/lib/planning/week";
 import { normalizedOrderNumber } from "@/lib/import/customers";
+import { WeekProposalButton } from "@/components/week-proposal-button";
 
 const hours = Array.from({ length: 10 }, (_, index) => index + 8);
 const deliveryDays = [1, 2, 3, 4, 5, 6, 7];
@@ -27,7 +28,7 @@ type Customer = {
   city: string | null;
 };
 
-export default async function PlanningPage({ searchParams }: { searchParams: Promise<{ week?: string }> }) {
+export default async function PlanningPage({ searchParams }: { searchParams: Promise<{ week?: string; proposal?: string; skipped?: string }> }) {
   const db = await createClient();
   const { data: { user } } = await db.auth.getUser();
   if (!user) redirect("/login");
@@ -40,7 +41,7 @@ export default async function PlanningPage({ searchParams }: { searchParams: Pro
   // backlog visible even while team selection is still being set up.
   const [{ data: orderData, error: orderError }, { data: appointmentData }] = await Promise.all([
     db.from("orders").select("id,source_order_number,customer_id,work_type,duration_minutes,required_people,status").order("created_at", { ascending: false }).limit(500),
-    db.from("appointments").select("id,order_id,customer_id,starts_at,ends_at,status").gte("starts_at", `${dateKey(monday)}T00:00:00.000Z`).lt("starts_at", `${dateKey(end)}T00:00:00.000Z`).order("starts_at"),
+    db.from("appointments").select("id,order_id,customer_id,starts_at,ends_at,selection_rank,status").gte("starts_at", `${dateKey(monday)}T00:00:00.000Z`).lt("starts_at", `${dateKey(end)}T00:00:00.000Z`).order("starts_at"),
   ]);
 
   const orders = (orderData ?? []) as Order[];
@@ -52,6 +53,7 @@ export default async function PlanningPage({ searchParams }: { searchParams: Pro
 
   const appointments = appointmentData ?? [];
   const confirmed = appointments.filter((appointment) => appointment.status === "confirmed");
+  const visibleAppointments = appointments.filter((appointment) => appointment.status === "confirmed" || appointment.selection_rank === 1);
   const confirmedOrderIds = new Set(confirmed.map((appointment) => appointment.order_id).filter(Boolean));
   const todo = orders.filter((order) => !confirmedOrderIds.has(order.id));
   const todoByNumber = new Map<string, Order>();
@@ -72,8 +74,8 @@ export default async function PlanningPage({ searchParams }: { searchParams: Pro
   }
   const todoGroups = [...todoByCustomer.values()];
   const hiddenDuplicates = todo.length - todoGroups.length;
-  const byDay = new Map<string, typeof appointments>();
-  for (const appointment of appointments) {
+  const byDay = new Map<string, typeof visibleAppointments>();
+  for (const appointment of visibleAppointments) {
     const key = amsterdamDate(new Date(appointment.starts_at));
     byDay.set(key, [...(byDay.get(key) || []), appointment]);
   }
@@ -93,8 +95,17 @@ export default async function PlanningPage({ searchParams }: { searchParams: Pro
         <h1>Uw week in één oogopslag</h1>
         <p className="muted">Dagen staan onder elkaar en uren lopen van links naar rechts. Maandag en zondag zijn beschikbaar voor uitzonderingen.</p>
       </div>
-      <Link className="import-button" href="/import">+ Orders importeren</Link>
+      <div className="planner-actions">
+        <WeekProposalButton week={dateKey(monday)} />
+        <Link className="import-button" href="/import">+ Orders importeren</Link>
+      </div>
     </section>
+
+    {params.proposal && <section className={params.proposal === "error" ? "card error" : "card proposal-result"} style={{ marginTop: 20 }}>
+      {params.proposal === "error"
+        ? "Het weekvoorstel kon niet worden opgeslagen. Controleer of er experts met werksoorten zijn ingesteld."
+        : <>Weekvoorstel klaar: <strong>{params.proposal}</strong> orders hebben Plan A, B en C gekregen. {Number(params.skipped || 0) > 0 && `${params.skipped} orders konden nog niet worden gekoppeld aan een beschikbare expert.`}</>}
+    </section>}
 
     {orderError && <section className="card error" style={{ marginTop: 20 }}>
       Orders kunnen niet worden gelezen: {orderError.message}
