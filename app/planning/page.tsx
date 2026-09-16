@@ -137,7 +137,7 @@ export default async function PlanningPage({ searchParams }: { searchParams: Pro
 
     {params.proposal && <section className={params.proposal === "error" ? "card error" : "card proposal-result"} style={{ marginTop: 20 }}>
       {params.proposal === "error"
-        ? "Het weekvoorstel kon niet worden opgeslagen. Controleer of er experts met werksoorten zijn ingesteld."
+        ? "Het weekvoorstel kon niet in Supabase worden opgeslagen. Controleer de rechten voor de tabel appointments en probeer daarna opnieuw."
         : <>Voorstel klaar: <strong>{params.proposal}</strong> orders hebben Plan A, B en C gekregen, vanaf deze week en waar nodig in de volgende weken. {Number(params.skipped || 0) > 0 && `${params.skipped} orders konden nog niet worden gekoppeld aan een beschikbare expert.`}</>}
     </section>}
 
@@ -162,11 +162,13 @@ export default async function PlanningPage({ searchParams }: { searchParams: Pro
           const day = addDays(monday, weekDay - 1);
           const key = dateKey(day);
           const items = byDay.get(key) || [];
+          const dailyExperts = [...new Set(items.map((appointment) => appointment.expert_id ? expertNames.get(appointment.expert_id) || "Expert" : "Team"))];
           const isExceptionDay = weekDay === 1 || weekDay === 7;
           return <div className="calendar-row" key={key}>
             <div className="day-label">
               <strong>{dayName.format(day)}</strong>
               <span>{items.length ? `${items.length} afspraak${items.length === 1 ? "" : "en"}` : isExceptionDay ? "Op aanvraag" : "Vrij"}</span>
+              {dailyExperts.length > 0 && <small className="day-experts">Monteurs: {dailyExperts.join(", ")}</small>}
             </div>
             <PlanningDropTarget date={key}>
               {hours.map((hour) => <div className="hour-cell" key={hour} />)}
@@ -175,7 +177,7 @@ export default async function PlanningPage({ searchParams }: { searchParams: Pro
                 const durationMinutes = Math.max(30, (new Date(appointment.ends_at).getTime() - new Date(appointment.starts_at).getTime()) / 60_000);
                 const href = appointment.order_id ? `/planning/order/${appointment.order_id}` : `/planning/customer/${appointment.customer_id}`;
                 return <Link key={appointment.id} href={href as never} className={`appointment ${appointment.status === "confirmed" ? "confirmed" : "proposal"}`} style={{ left: `${Math.max(0, start) / hours.length * 100}%`, width: `calc(${Math.min(100 - Math.max(0, start) / hours.length * 100, durationMinutes / 60 / hours.length * 100)}% - 7px)` }}>
-                  <strong>Ingepland bezoek</strong>
+                  <strong>{customers.get(appointment.customer_id)?.name || "Ingepland bezoek"}</strong>
                   <span>{formatTime(appointment.starts_at)}</span>
                 </Link>;
               })}
