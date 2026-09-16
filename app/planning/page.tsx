@@ -22,6 +22,8 @@ type Order = {
 type Customer = {
   id: string;
   name: string;
+  address_line: string;
+  postal_code: string | null;
   city: string | null;
 };
 
@@ -44,7 +46,7 @@ export default async function PlanningPage({ searchParams }: { searchParams: Pro
   const orders = (orderData ?? []) as Order[];
   const customerIds = [...new Set(orders.map((order) => order.customer_id))];
   const { data: customerData } = customerIds.length
-    ? await db.from("customers").select("id,name,city").in("id", customerIds)
+    ? await db.from("customers").select("id,name,address_line,postal_code,city").in("id", customerIds)
     : { data: [] as Customer[] };
   const customers = new Map((customerData ?? []).map((customer) => [customer.id, customer as Customer]));
 
@@ -57,8 +59,19 @@ export default async function PlanningPage({ searchParams }: { searchParams: Pro
     const orderKey = order.source_order_number ? normalizedOrderNumber(order.source_order_number) : order.id;
     if (!todoByNumber.has(orderKey)) todoByNumber.set(orderKey, order);
   }
-  const uniqueTodo = [...todoByNumber.values()];
-  const hiddenDuplicates = todo.length - uniqueTodo.length;
+  const uniqueOrders = [...todoByNumber.values()];
+  const todoByCustomer = new Map<string, { order: Order; count: number; customer: Customer | undefined }>();
+  for (const order of uniqueOrders) {
+    const customer = customers.get(order.customer_id);
+    const customerKey = customer
+      ? [customer.name, customer.address_line, customer.postal_code, customer.city].map((value) => String(value || "").trim().toLocaleLowerCase("nl-NL").replace(/\s+/g, " ")).join("|")
+      : order.id;
+    const existing = todoByCustomer.get(customerKey);
+    if (existing) existing.count += 1;
+    else todoByCustomer.set(customerKey, { order, count: 1, customer });
+  }
+  const todoGroups = [...todoByCustomer.values()];
+  const hiddenDuplicates = todo.length - todoGroups.length;
   const byDay = new Map<string, typeof appointments>();
   for (const appointment of appointments) {
     const key = amsterdamDate(new Date(appointment.starts_at));
@@ -136,15 +149,14 @@ export default async function PlanningPage({ searchParams }: { searchParams: Pro
 
       <article className="card">
         <div className="eyebrow">Nog te doen</div>
-        <h2>Nog niet definitief ({uniqueTodo.length})</h2>
-        {hiddenDuplicates > 0 && <p className="muted">{hiddenDuplicates} dubbele importregel{hiddenDuplicates === 1 ? "" : "s"} is verborgen; elk ordernummer staat maar één keer in deze lijst.</p>}
-        {uniqueTodo.length ? <ul className="customer-list">{uniqueTodo.slice(0, 100).map((order) => {
-          const customer = customers.get(order.customer_id);
+        <h2>Nog niet definitief ({todoGroups.length})</h2>
+        {hiddenDuplicates > 0 && <p className="muted">{hiddenDuplicates} dubbele regel{hiddenDuplicates === 1 ? "" : "s"} is samengevoegd; iedere klant en ieder adres staat maar één keer in deze lijst.</p>}
+        {todoGroups.length ? <ul className="customer-list">{todoGroups.slice(0, 100).map(({ order, count, customer }) => {
           return <li key={order.id}>
             <Link href={`/planning/order/${order.id}` as never}>
-              <strong>{order.source_order_number || "Order zonder nummer"} · {customer?.name || "Klant"}</strong>
+              <strong>{customer?.name || "Klant"}</strong>
             </Link>
-            <span>{customer?.city || "plaats onbekend"} · {order.required_people} persoon{order.required_people === 1 ? "" : "en"} · {order.work_type || "werksoort onbekend"}</span>
+            <span>{count} open order{count === 1 ? "" : "s"} · {order.source_order_number || "zonder nummer"} · {customer?.city || "plaats onbekend"}</span>
           </li>;
         })}</ul> : <p className="muted">Geen open orders gevonden. Importeer een nieuw bestand of controleer de melding hierboven.</p>}
       </article>
