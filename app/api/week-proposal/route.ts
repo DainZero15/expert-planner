@@ -29,6 +29,8 @@ type Order = {
 type Customer = {
   id: string;
   available_days: number[];
+  postal_code: string | null;
+  city: string | null;
 };
 
 const baseProposalDays = [2, 3, 4, 5, 6];
@@ -52,6 +54,12 @@ const timestamp = (day: string, minutes: number) => {
   const hours = String(Math.floor(minutes / 60)).padStart(2, "0");
   const remainder = String(minutes % 60).padStart(2, "0");
   return new Date(`${day}T${hours}:${remainder}:00+02:00`).toISOString();
+};
+const locationKey = (customer: Customer | undefined) => {
+  if (!customer) return "";
+  const postal = String(customer.postal_code || "").replace(/\s/g, "").slice(0, 4).toLocaleLowerCase("nl-NL");
+  const city = String(customer.city || "").trim().toLocaleLowerCase("nl-NL");
+  return postal || city;
 };
 
 export async function POST(request: Request) {
@@ -104,7 +112,7 @@ export async function POST(request: Request) {
   const experts = (expertData ?? []) as Expert[];
   const customerIds = [...new Set(orders.map((order) => order.customer_id))];
   const { data: customerData } = customerIds.length
-    ? await db.from("customers").select("id,available_days").in("id", customerIds)
+    ? await db.from("customers").select("id,available_days,postal_code,city").in("id", customerIds)
     : { data: [] as Customer[] };
   const customers = new Map((customerData ?? []).map((customer) => [customer.id, customer as Customer]));
 
@@ -140,25 +148,42 @@ export async function POST(request: Request) {
   let skipped = 0;
   const proposals: Array<{ customer_id: string; expert_id: string; order_id: string; starts_at: string; ends_at: string; selection_rank: number; status: string }> = [];
 
-  for (const order of orders) {
+  type Candidate = { expert: Expert; dayIndex: number; start: number; duration: number; routeScore: number };
+  // Without a paid routing provider we cannot claim an exact driving duration.
+  // Instead, the proposal keeps consecutive visits in the same postcode/city
+  // area together whenever that does not make the calendar less efficient.
+  const lastLocationByExpertDay = new Map<string, string>();
+  const candidateSlots = (order: Order): Candidate[] => {
     const customer = customers.get(order.customer_id);
-    const candidates = experts.filter((expert) => hasSkill(expert, order.work_type));
-    let choice: { expert: Expert; dayIndex: number; start: number; duration: number } | undefined;
-
-    for (const expert of candidates) {
+    const candidates: Candidate[] = [];
+    for (const expert of experts.filter((item) => hasSkill(item, order.work_type))) {
       for (let dayIndex = 0; dayIndex < days.length; dayIndex += 1) {
         const day = days[dayIndex];
-        // Older expert records may not have work_days yet. In that case use
-        // the normal Tuesday–Saturday proposal days instead of skipping them.
         if (expert.work_days?.length && !expert.work_days.includes(day.dayNumber)) continue;
         if (customer?.available_days?.length && !customer.available_days.includes(day.dayNumber)) continue;
-        const available = nextAvailable.get(expert.id)?.get(day.date) || workdayStart;
         const duration = estimatedDurationMinutes(order.work_type, order.duration_minutes, expert.default_visit_minutes);
+        const available = nextAvailable.get(expert.id)?.get(day.date) || workdayStart;
         const start = nextWorkableStart(available, duration);
         if (!hasRoomForVisit(start, duration)) continue;
-        if (!choice || start < choice.start) choice = { expert, dayIndex, start, duration };
+        const currentLocation = lastLocationByExpertDay.get(`${expert.id}:${day.date}`);
+        const location = locationKey(customer);
+        // Small score differences keep neighbouring postcodes together; one
+        // day (1,440 minutes) always outweighs this local route preference.
+        const routeScore = currentLocation && location
+          ? currentLocation === location ? -25 : 25
+          : 0;
+        candidates.push({ expert, dayIndex, start, duration, routeScore });
       }
     }
+    return candidates.sort((left, right) => (
+      left.dayIndex * 1440 + left.start + left.routeScore
+      - (right.dayIndex * 1440 + right.start + right.routeScore)
+    ));
+  };
+
+  for (const order of orders) {
+    const customer = customers.get(order.customer_id);
+    const choice = candidateSlots(order)[0];
 
     if (!choice) {
       skipped += 1;
@@ -171,20 +196,43 @@ export async function POST(request: Request) {
     // Reserve a visible travel buffer after every visit. It is a local
     // planning estimate until real driving times are connected later.
     slots?.set(day.date, start + duration + estimatedTravelMinutes);
+    lastLocationByExpertDay.set(`${expert.id}:${day.date}`, locationKey(customer));
 
-    for (let rank = 1; rank <= 3; rank += 1) {
-      const optionDay = days[(dayIndex + rank - 1) % days.length];
-      const optionStart = rank === 1 ? start : workdayStart;
+    const selectedDates = new Set([day.date]);
+    const alternatives = candidateSlots(order);
+    const choices: Candidate[] = [choice];
+    for (const candidate of alternatives) {
+      if (choices.length === 3) break;
+      const candidateDay = days[candidate.dayIndex];
+      // Give a customer genuinely different appointment dates first. If a
+      // specialist only works one day, use the next possible hour instead.
+      if (selectedDates.has(candidateDay.date)) continue;
+      choices.push(candidate);
+      selectedDates.add(candidateDay.date);
+    }
+    for (const candidate of alternatives) {
+      if (choices.length === 3) break;
+      if (choices.some((choiceItem) => choiceItem.expert.id === candidate.expert.id && choiceItem.dayIndex === candidate.dayIndex && choiceItem.start === candidate.start)) continue;
+      choices.push(candidate);
+    }
+
+    choices.forEach((option, index) => {
+      const rank = index + 1;
+      const optionDay = days[option.dayIndex];
+      // Plan B and C deliberately get a later start where possible, making
+      // the offered choices useful even when they fall on a similar route.
+      const shiftedStart = rank === 1 ? option.start : nextWorkableStart(option.start + (rank - 1) * 60, option.duration);
+      const optionStart = hasRoomForVisit(shiftedStart, option.duration) ? shiftedStart : option.start;
       proposals.push({
         customer_id: order.customer_id,
-        expert_id: expert.id,
+        expert_id: option.expert.id,
         order_id: order.id,
         starts_at: timestamp(optionDay.date, optionStart),
-        ends_at: timestamp(optionDay.date, optionStart + duration),
+        ends_at: timestamp(optionDay.date, optionStart + option.duration),
         selection_rank: rank,
         status: "proposed",
       });
-    }
+    });
     planned += 1;
   }
 

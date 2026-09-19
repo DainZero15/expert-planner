@@ -3,6 +3,8 @@ import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { formatTime } from "@/lib/planning/week";
 
+const dateLabel = new Intl.DateTimeFormat("nl-NL", { weekday: "long", day: "numeric", month: "long" });
+
 type Customer = {
   name: string;
   address_line: string;
@@ -64,10 +66,12 @@ export default async function OrderPlanningPage({ params }: { params: Promise<{ 
 
     <section className="card" style={{ marginTop: 20 }}>
       <h2>Plan A, B en C</h2>
-      <p className="muted">Dit basisvoorstel houdt rekening met werktijden en werksoorten. Definitief bevestigde afspraken worden nooit automatisch verplaatst. Echte rijtijden voegen we later toe.</p>
+      <p className="muted">Plan A is de gunstigste beschikbare routevolgorde. B en C bieden andere dagen en tijden. Definitief bevestigde afspraken worden nooit automatisch verplaatst.</p>
       {options.length ? <div className="option-grid">{options.map((option) => <article className="option" key={option.id}>
         <strong>Plan {String.fromCharCode(64 + (option.selection_rank || 1))}</strong>
-        <p>{formatTime(option.starts_at)}</p>
+        <p>{dateLabel.format(new Date(option.starts_at))}</p>
+        <p><strong>{formatTime(option.starts_at)}</strong></p>
+        {option.selection_rank === 1 && <span className="route-best">Beste route</span>}
         {option.status === "confirmed"
           ? <span className="tag">Definitief</span>
           : <form action={`/api/orders/${order.id}/confirm`} method="post"><input type="hidden" name="appointmentId" value={option.id} /><button type="submit">Deze optie bevestigen</button></form>}
