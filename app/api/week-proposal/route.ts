@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { addDays, amsterdamDate, dateKey, mondayOfWeek } from "@/lib/planning/week";
 import { estimatedDurationMinutes } from "@/lib/planning/duration";
 import { normalizedOrderNumber } from "@/lib/import/customers";
-import { hasRoomForVisit, nextAvailableAfterVisit, nextWorkableStart, workdayStart } from "@/lib/planning/workday";
+import { hasRoomForVisit, lunchEarliest, lunchLatest, lunchMinutes, nextAvailableAfterVisit, nextWorkableStart, workdayStart } from "@/lib/planning/workday";
 
 type Expert = {
   id: string;
@@ -130,9 +130,13 @@ export async function POST(request: Request) {
     date: dateKey(addDays(monday, weekIndex * 7 + dayNumber - 1)),
   }))).flat();
   const nextAvailable = new Map<string, Map<string, number>>();
+  const lunchTaken = new Map<string, boolean>();
   for (const expert of experts) {
     const expertSlots = new Map<string, number>();
-    for (const day of days) expertSlots.set(day.date, workdayStart);
+    for (const day of days) {
+      expertSlots.set(day.date, workdayStart);
+      lunchTaken.set(`${expert.id}:${day.date}`, false);
+    }
     nextAvailable.set(expert.id, expertSlots);
   }
   for (const appointment of confirmed) {
@@ -148,7 +152,7 @@ export async function POST(request: Request) {
   let skipped = 0;
   const proposals: Array<{ customer_id: string; expert_id: string; order_id: string; starts_at: string; ends_at: string; selection_rank: number; status: string }> = [];
 
-  type Candidate = { expert: Expert; dayIndex: number; start: number; duration: number; routeScore: number };
+  type Candidate = { expert: Expert; dayIndex: number; start: number; duration: number; routeScore: number; lunchBefore: boolean };
   // Without a paid routing provider we cannot claim an exact driving duration.
   // Instead, the proposal keeps consecutive visits in the same postcode/city
   // area together whenever that does not make the calendar less efficient.
@@ -163,7 +167,12 @@ export async function POST(request: Request) {
         if (customer?.available_days?.length && !customer.available_days.includes(day.dayNumber)) continue;
         const duration = estimatedDurationMinutes(order.work_type, order.duration_minutes, expert.default_visit_minutes);
         const available = nextAvailable.get(expert.id)?.get(day.date) || workdayStart;
-        const start = nextWorkableStart(available, duration);
+        const slotKey = `${expert.id}:${day.date}`;
+        const requiresLunch = !lunchTaken.get(slotKey);
+        // Keep the day contiguous. A very long job gets the break before it;
+        // otherwise the break follows the first job that reaches late morning.
+        const lunchBefore = requiresLunch && (available >= lunchEarliest || available + duration > lunchLatest);
+        const start = nextWorkableStart(available + (lunchBefore ? lunchMinutes : 0), duration);
         if (!hasRoomForVisit(start, duration)) continue;
         const currentLocation = lastLocationByExpertDay.get(`${expert.id}:${day.date}`);
         const location = locationKey(customer);
@@ -172,7 +181,7 @@ export async function POST(request: Request) {
         const routeScore = currentLocation && location
           ? currentLocation === location ? -25 : 25
           : 0;
-        candidates.push({ expert, dayIndex, start, duration, routeScore });
+        candidates.push({ expert, dayIndex, start, duration, routeScore, lunchBefore });
       }
     }
     return candidates.sort((left, right) => (
@@ -195,7 +204,16 @@ export async function POST(request: Request) {
     const day = days[dayIndex];
     // Reserve a visible travel buffer after every visit. It is a local
     // planning estimate until real driving times are connected later.
-    slots?.set(day.date, nextAvailableAfterVisit(start, duration));
+    const slotKey = `${expert.id}:${day.date}`;
+    let availableAfterVisit = nextAvailableAfterVisit(start, duration);
+    if (!lunchTaken.get(slotKey)) {
+      if (choice.lunchBefore) lunchTaken.set(slotKey, true);
+      else if (start + duration >= lunchEarliest) {
+        availableAfterVisit += lunchMinutes;
+        lunchTaken.set(slotKey, true);
+      }
+    }
+    slots?.set(day.date, availableAfterVisit);
     lastLocationByExpertDay.set(`${expert.id}:${day.date}`, locationKey(customer));
 
     const selectedDates = new Set([day.date]);
