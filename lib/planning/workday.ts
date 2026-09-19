@@ -12,3 +12,16 @@ export const nextWorkableStart = (availableMinutes: number, durationMinutes: num
 };
 
 export const hasRoomForVisit = (startMinutes: number, durationMinutes: number) => startMinutes + durationMinutes <= workdayEnd;
+
+/** Travel may never consume the fixed lunch break. */
+export const travelStartAfterVisit = (visitEndMinutes: number, travelMinutes = estimatedTravelMinutes) => {
+  const start = Math.max(workdayStart, visitEndMinutes);
+  if (start >= lunchStart && start < lunchEnd) return lunchEnd;
+  if (start < lunchStart && start + travelMinutes > lunchStart) return lunchEnd;
+  return start;
+};
+
+export const nextAvailableAfterVisit = (visitStartMinutes: number, durationMinutes: number, travelMinutes = estimatedTravelMinutes) => {
+  const travelStart = travelStartAfterVisit(visitStartMinutes + durationMinutes, travelMinutes);
+  return travelStart + travelMinutes;
+};

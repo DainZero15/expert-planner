@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { addDays, amsterdamDate, dateKey, mondayOfWeek } from "@/lib/planning/week";
 import { estimatedDurationMinutes } from "@/lib/planning/duration";
 import { normalizedOrderNumber } from "@/lib/import/customers";
-import { estimatedTravelMinutes, hasRoomForVisit, nextWorkableStart, workdayStart } from "@/lib/planning/workday";
+import { hasRoomForVisit, nextAvailableAfterVisit, nextWorkableStart, workdayStart } from "@/lib/planning/workday";
 
 type Expert = {
   id: string;
@@ -195,7 +195,7 @@ export async function POST(request: Request) {
     const day = days[dayIndex];
     // Reserve a visible travel buffer after every visit. It is a local
     // planning estimate until real driving times are connected later.
-    slots?.set(day.date, start + duration + estimatedTravelMinutes);
+    slots?.set(day.date, nextAvailableAfterVisit(start, duration));
     lastLocationByExpertDay.set(`${expert.id}:${day.date}`, locationKey(customer));
 
     const selectedDates = new Set([day.date]);

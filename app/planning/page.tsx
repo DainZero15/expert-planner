@@ -8,7 +8,7 @@ import { googleMapsRouteLinks, type RouteStop } from "@/lib/planning/google-maps
 import { PlanningDragList } from "@/components/planning-drag-list";
 import { PlanningDropTarget } from "@/components/planning-drop-target";
 import { estimatedDurationMinutes } from "@/lib/planning/duration";
-import { lunchEnd, lunchStart } from "@/lib/planning/workday";
+import { estimatedTravelMinutes, lunchEnd, lunchStart, travelStartAfterVisit } from "@/lib/planning/workday";
 
 const hours = Array.from({ length: 24 }, (_, index) => index);
 const deliveryDays = [1, 2, 3, 4, 5, 6, 7];
@@ -171,13 +171,13 @@ export default async function PlanningPage({ searchParams }: { searchParams: Pro
               .filter((candidate) => (candidate.expert_id || "team") === expertId && candidate.starts_at > appointment.starts_at)
               .sort((left, right) => left.starts_at.localeCompare(right.starts_at))[0];
             if (!nextAppointment) return [];
-            const departure = new Date(appointment.ends_at).getTime();
-            const nextStart = new Date(nextAppointment.starts_at).getTime();
-            const availableMinutes = Math.floor((nextStart - departure) / 60_000);
-            const minutes = Math.min(15, availableMinutes);
-            if (minutes <= 0) return [];
             const [travelHours, travelMinutes] = formatTime(appointment.ends_at).split(":").map(Number);
-            return [{ id: `${appointment.id}-travel`, expertId, startMinutes: travelHours * 60 + travelMinutes, minutes }];
+            const [nextHours, nextMinutes] = formatTime(nextAppointment.starts_at).split(":").map(Number);
+            const startMinutes = travelStartAfterVisit(travelHours * 60 + travelMinutes);
+            const availableMinutes = nextHours * 60 + nextMinutes - startMinutes;
+            const minutes = Math.min(estimatedTravelMinutes, availableMinutes);
+            if (minutes <= 0) return [];
+            return [{ id: `${appointment.id}-travel`, expertId, startMinutes, minutes }];
           });
           const isExceptionDay = weekDay === 1 || weekDay === 7;
           return <div className="calendar-row" key={key} style={{ minHeight: `${Math.max(106, dailyExpertIds.length * 62 + 14)}px` }}>

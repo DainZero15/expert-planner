@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { estimatedTravelMinutes, hasRoomForVisit, nextWorkableStart, workdayStart } from "@/lib/planning/workday";
+import { hasRoomForVisit, nextAvailableAfterVisit, nextWorkableStart, workdayStart } from "@/lib/planning/workday";
 import { estimatedDurationMinutes } from "@/lib/planning/duration";
 
 const isDate = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value);
@@ -46,10 +46,11 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     .eq("expert_id", expertId)
     .gte("starts_at", `${day}T00:00:00.000Z`)
     .lt("starts_at", `${nextDay.toISOString().slice(0, 10)}T00:00:00.000Z`)
+    .or("selection_rank.eq.1,status.eq.confirmed")
     .neq("id", appointment?.id || "00000000-0000-0000-0000-000000000000");
   if (appointmentReadError) return NextResponse.json({ error: appointmentReadError.message }, { status: 500 });
   const duration = estimatedDurationMinutes(order.work_type, order.duration_minutes);
-  const latestEnd = Math.max(workdayStart, ...(otherAppointments ?? []).map((item) => minutesInAmsterdam(item.ends_at) + estimatedTravelMinutes));
+  const latestEnd = Math.max(workdayStart, ...(otherAppointments ?? []).map((item) => nextAvailableAfterVisit(minutesInAmsterdam(item.ends_at), 0)));
   const minutes = nextWorkableStart(latestEnd, duration);
   if (!hasRoomForVisit(minutes, duration)) return NextResponse.json({ error: "Geen vrije tijd meer voor deze monteur op deze dag." }, { status: 409 });
   const values = {
