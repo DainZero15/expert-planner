@@ -201,7 +201,7 @@ export default async function PlanningPage({ searchParams }: { searchParams: Pro
                   <span>{formatTime(appointment.starts_at)}–{formatTime(appointment.ends_at)}</span>
                 </Link>;
               })}
-              {travelSegments.map((travel) => <div key={travel.id} className="travel-block" style={{ left: `${Math.max(0, travel.startMinutes) / 60 / hours.length * 100}%`, top: `${26 + dailyExpertIds.indexOf(travel.expertId) * 62}px`, width: `calc(${travel.minutes / 60 / hours.length * 100}% - 2px)` }}>
+              {travelSegments.map((travel) => <div key={travel.id} title={`Geschatte reistijd: ${travel.minutes} minuten`} className="travel-block" style={{ left: `${Math.max(0, travel.startMinutes) / 60 / hours.length * 100}%`, top: `${8 + dailyExpertIds.indexOf(travel.expertId) * 62}px`, width: `calc(${travel.minutes / 60 / hours.length * 100}% - 2px)` }}>
                 Reis ±{travel.minutes}m
               </div>)}
               {lunchBlocks.map((lunch) => <div key={`${lunch.expertId}-lunch`} className="lunch-block" style={{ left: `${lunchStart / 60 / hours.length * 100}%`, top: `${42 + lunch.lane * 62}px`, width: `calc(${(lunchEnd - lunchStart) / 60 / hours.length * 100}% - 3px)` }}>Pauze · 60m</div>)}
