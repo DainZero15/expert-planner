@@ -25,7 +25,7 @@ export function ExpertFields({ expert = {} }: { expert?: ExpertValues }) {
       <label>Pauze minuten<input name="breakMinutes" type="number" defaultValue={expert.breakMinutes ?? 30} /></label>
     </div>
     <label>Standaard bezoektijd minuten<input name="visitMinutes" type="number" defaultValue={expert.visitMinutes ?? 60} /></label>
-    <label>Werksoorten waarin deze expert goed is<input name="skills" placeholder="Bijvoorbeeld: Audio, Witgoed, Sonos installatie, Inbouw" defaultValue={expert.skills?.join(", ")} /></label>
+    <label>Werksoorten waarin deze expert goed is<input name="skills" placeholder="Bijvoorbeeld: TV, TV wandmontage, Audio, Sonos, Witgoed, Inbouw, Fornuis" defaultValue={expert.skills?.join(", ")} /></label>
     <label>Werkgebieden, gescheiden door komma<textarea name="areas" defaultValue={expert.areas?.join(", ")} /></label>
     <label>Uitgesloten gebieden<textarea name="excluded" defaultValue={expert.excluded?.join(", ")} /></label>
     <label>Voorkeuren / opmerkingen<textarea name="preferences" defaultValue={expert.notes} /></label>
