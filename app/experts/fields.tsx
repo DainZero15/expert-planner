@@ -34,6 +34,7 @@ export function ExpertFields({ expert = {}, branches = [] }: { expert?: ExpertVa
   const savedSkills = expert.skills || [];
   const [newSkill, setNewSkill] = useState("");
   const [extraSkills, setExtraSkills] = useState(() => savedSkills.filter((skill) => !defaultSkills.some((item) => normalized(item) === normalized(skill))));
+  const [useFixedLocations, setUseFixedLocations] = useState(Boolean(expert.startBranchId || expert.lunchBranchId || expert.endBranchId || expert.start || expert.end));
   const addSkill = () => {
     const value = newSkill.trim();
     if (!value || [...defaultSkills, ...extraSkills].some((skill) => normalized(skill) === normalized(value))) return;
@@ -44,17 +45,20 @@ export function ExpertFields({ expert = {}, branches = [] }: { expert?: ExpertVa
   return <>
     {expert.id && <input type="hidden" name="id" value={expert.id} />}
     <label>Naam<input name="name" required defaultValue={expert.name} /></label>
-    <fieldset className="branch-assignment">
-      <legend>Vestigingen van deze expert</legend>
-      <p className="muted">Kies waar de monteur ’s ochtends start, tijdens de pauze de bus kan laden en aan het eind van de dag terugkomt.</p>
+    <section className="optional-locations">
+      <div><strong>Start- en eindlocatie</strong><p className="muted">Standaard kiest de planner automatisch de beste route. Een vaste locatie is alleen nodig als u die op een bepaalde dag wilt afdwingen.</p></div>
+      <button type="button" className="secondary-button" onClick={() => setUseFixedLocations((current) => !current)}>{useFixedLocations ? "Vaste locaties verbergen" : "+ Vaste locaties instellen"}</button>
+    </section>
+    {useFixedLocations && <fieldset className="branch-assignment">
+      <legend>Vaste locaties - optioneel</legend>
+      <p className="muted">Kies alleen een vestiging als deze expert daar echt moet beginnen, tijdens pauze moet bijladen of moet eindigen.</p>
       <div className="grid">
-        <label>Start vestiging<select name="startBranchId" defaultValue={expert.startBranchId || ""}><option value="">Los startadres gebruiken</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select></label>
-        <label>Pauze / bijladen<select name="lunchBranchId" defaultValue={expert.lunchBranchId || ""}><option value="">Geen vaste vestiging</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select></label>
-        <label>Eind vestiging<select name="endBranchId" defaultValue={expert.endBranchId || ""}><option value="">Los eindadres gebruiken</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select></label>
+        <label>Start vestiging<select name="startBranchId" defaultValue={expert.startBranchId || ""}><option value="">Automatisch laten bepalen</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select></label>
+        <label>Pauze / bijladen<select name="lunchBranchId" defaultValue={expert.lunchBranchId || ""}><option value="">Automatisch laten bepalen</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select></label>
+        <label>Eind vestiging<select name="endBranchId" defaultValue={expert.endBranchId || ""}><option value="">Automatisch laten bepalen</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select></label>
       </div>
-    </fieldset>
-    <label>Los startadres <small className="muted">Alleen nodig als er geen startvestiging is gekozen.</small><input name="start" defaultValue={expert.start} /></label>
-    <label>Los eindadres <small className="muted">Alleen nodig als er geen eindvestiging is gekozen.</small><input name="end" defaultValue={expert.end} /></label>
+      <div className="grid"><label>Los startadres<input name="start" defaultValue={expert.start} /></label><label>Los eindadres<input name="end" defaultValue={expert.end} /></label></div>
+    </fieldset>}
     <div className="grid">
       <label>Begintijd<input name="startTime" type="time" defaultValue={expert.startTime || "08:00"} /></label>
       <label>Eindtijd<input name="endTime" type="time" defaultValue={expert.endTime || "17:00"} /></label>
