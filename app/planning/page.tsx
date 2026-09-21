@@ -2,7 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { addDays, amsterdamDate, dateKey, formatTime, mondayOfWeek, weekLabel } from "@/lib/planning/week";
-import { normalizedOrderNumber } from "@/lib/import/customers";
+import { normalizedOrderNumber } from "@/lib/import/order-number";
 import { WeekProposalButton } from "@/components/week-proposal-button";
 import { googleMapsRouteLinks, type RouteStop } from "@/lib/planning/google-maps";
 import { PlanningDragList } from "@/components/planning-drag-list";

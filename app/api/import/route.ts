@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
-import { normalizedOrderNumber, parseFile, draftSchema } from "@/lib/import/customers";
+import { parseFile, draftSchema } from "@/lib/import/customers";
+import { normalizedOrderNumber } from "@/lib/import/order-number";
 
 const customerKey = (row: { name: string; addressLine: string; postalCode: string | null; city: string | null }) => [row.name, row.addressLine, row.postalCode, row.city].map((value) => String(value || "").trim().toLocaleLowerCase("nl-NL").replace(/\s+/g, " ")).join("|");
 

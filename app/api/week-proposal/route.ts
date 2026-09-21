@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { addDays, amsterdamDate, dateKey, mondayOfWeek } from "@/lib/planning/week";
 import { estimatedDurationMinutes } from "@/lib/planning/duration";
-import { normalizedOrderNumber } from "@/lib/import/customers";
+import { normalizedOrderNumber } from "@/lib/import/order-number";
 import { hasRoomForVisit, lunchEarliest, lunchLatest, lunchMinutes, nextAvailableAfterVisit, nextWorkableStart, workdayStart } from "@/lib/planning/workday";
 
 type Expert = {

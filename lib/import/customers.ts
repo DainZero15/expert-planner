@@ -1,6 +1,6 @@
 import * as XLSX from "xlsx";
-import { PDFParse } from "pdf-parse";
 import { z } from "zod";
+import { normalizedOrderNumber } from "@/lib/import/order-number";
 
 export const draftSchema = z.object({
   name: z.string().min(1).max(300), addressLine: z.string().min(1).max(500), customerNumber: z.string().nullable(), orderNumber: z.string().nullable(), postalCode: z.string().nullable(), city: z.string().nullable(), email: z.string().email().nullable(), phone: z.string().nullable(), workType: z.string().nullable(), branch: z.string().nullable(), documentType: z.enum(["order", "repair", "invoice"]).default("order"), durationMinutes: z.number().int().positive().nullable(), requiredPeople: z.number().int().min(1).max(4).nullable(), issues: z.array(z.string()),
@@ -11,7 +11,6 @@ const aliases: Record<string, string[]> = {
   name: ["naam", "klantnaam", "bedrijfsnaam", "contactpersoon", "contact persoon", "contactnaam", "naam contactpersoon", "voor en achternaam", "volledige naam"], addressLine: ["adres", "straat", "address"], customerNumber: ["klantnummer", "debiteurnummer"], orderNumber: ["ordernummer", "opdrachtnummer", "opdrachtid", "opdracht-id", "order id", "identificatie"], postalCode: ["postcode"], city: ["plaats", "woonplaats", "city"], email: ["email", "emailadres", "mailadres", "e-mailadres"], phone: ["telefoon", "telefoonnummer", "phone"], workType: ["taak", "werkzaamheden", "werksoort", "soort werkzaamheden", "type werk"], branch: ["filiaal", "vestiging", "winkel", "winkelnaam", "order filiaal", "order vestiging", "afkomstig van", "bron vestiging"], durationMinutes: ["duur min", "duur minuten", "duur(min)", "duur"], requiredPeople: ["personen nodig", "aantal personen", "monteurs nodig"],
 };
 const key = (value: string) => value.toLocaleLowerCase("nl-NL").replace(/[^a-z0-9]/g, "");
-export const normalizedOrderNumber = (value: string) => key(value);
 
 const cleanPdfText = (value: string) => value.replace(/\r/g, "").replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
 const firstMatch = (text: string, patterns: RegExp[]) => {
@@ -58,8 +57,11 @@ async function parsePdfFile(buffer: ArrayBuffer) {
   // pdf-parse v2 uses the current PDF.js reader. It copes with more variants of
   // PDF exports than the legacy parser (including many original order exports).
   // A new byte array is deliberately created: PDF.js takes ownership of typed data.
+  // Loading is deliberately deferred until a PDF is uploaded. This keeps the
+  // normal planner and spreadsheet-import routes independent from the PDF engine.
+  const { PDFParse } = await import("pdf-parse");
   const parser = new PDFParse({ data: new Uint8Array(buffer.slice(0)) });
-  let parsed: Awaited<ReturnType<PDFParse["getText"]>>;
+  let parsed: { text: string; total: number };
   try {
     parsed = await parser.getText();
   } catch (error) {
