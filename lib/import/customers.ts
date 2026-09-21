@@ -5,6 +5,7 @@ import { z } from "zod";
 export const draftSchema = z.object({
   name: z.string().min(1).max(300), addressLine: z.string().min(1).max(500), customerNumber: z.string().nullable(), orderNumber: z.string().nullable(), postalCode: z.string().nullable(), city: z.string().nullable(), email: z.string().email().nullable(), phone: z.string().nullable(), workType: z.string().nullable(), branch: z.string().nullable(), documentType: z.enum(["order", "repair", "invoice"]).default("order"), durationMinutes: z.number().int().positive().nullable(), requiredPeople: z.number().int().min(1).max(4).nullable(), issues: z.array(z.string()),
 });
+export type ImportDraft = z.infer<typeof draftSchema>;
 
 const aliases: Record<string, string[]> = {
   name: ["naam", "klantnaam", "bedrijfsnaam", "contactpersoon", "contact persoon", "contactnaam", "naam contactpersoon", "voor en achternaam", "volledige naam"], addressLine: ["adres", "straat", "address"], customerNumber: ["klantnummer", "debiteurnummer"], orderNumber: ["ordernummer", "opdrachtnummer", "opdrachtid", "opdracht-id", "order id", "identificatie"], postalCode: ["postcode"], city: ["plaats", "woonplaats", "city"], email: ["email", "emailadres", "mailadres", "e-mailadres"], phone: ["telefoon", "telefoonnummer", "phone"], workType: ["taak", "werkzaamheden", "werksoort", "soort werkzaamheden", "type werk"], branch: ["filiaal", "vestiging", "winkel", "winkelnaam", "order filiaal", "order vestiging", "afkomstig van", "bron vestiging"], durationMinutes: ["duur min", "duur minuten", "duur(min)", "duur"], requiredPeople: ["personen nodig", "aantal personen", "monteurs nodig"],
@@ -21,7 +22,7 @@ const firstMatch = (text: string, patterns: RegExp[]) => {
   return null;
 };
 
-const parsePdfChunk = (chunk: string) => {
+const parsePdfChunk = (chunk: string): ImportDraft => {
   const documentType = /reparatie|servicebon|storingsbon|reparatiebon/i.test(chunk) ? "repair" as const : /factuur|invoice/i.test(chunk) ? "invoice" as const : "order" as const;
   const addressMatch = /\b([A-ZÀ-Ý][A-Za-zÀ-ÿ' .-]{1,70}?\s+\d+[A-Za-z0-9/-]*)\s*[\n, ]+\s*(\d{4}\s?[A-Z]{2})\s+([A-ZÀ-Ý][A-Za-zÀ-ÿ' .-]{1,60})/m.exec(chunk);
   const name = firstMatch(chunk, [/(?:contactpersoon|klant(?:naam)?|naam)\s*[:\-]\s*([^\n]{2,120})/i]) || "";
@@ -61,7 +62,7 @@ async function parsePdfFile(buffer: ArrayBuffer) {
   const chunks = starts.length ? starts.map((start, index) => text.slice(start, starts[index + 1] || text.length)) : [text];
   if (chunks.length > 5000) throw Error("PDF bevat te veel opdrachten.");
   const seenOrders = new Set<string>();
-  const drafts = chunks.map(parsePdfChunk).map((row) => {
+  const drafts: ImportDraft[] = chunks.map(parsePdfChunk).map((row) => {
     if (row.orderNumber && seenOrders.has(normalizedOrderNumber(row.orderNumber))) row.issues.push("Dubbel ordernummer in PDF");
     if (row.orderNumber) seenOrders.add(normalizedOrderNumber(row.orderNumber));
     return row;
@@ -69,7 +70,7 @@ async function parsePdfFile(buffer: ArrayBuffer) {
   return { columns: [`PDF - ${parsed.numpages} pagina${parsed.numpages === 1 ? "" : "'s"}`, "Automatisch herkende velden"], drafts };
 }
 
-export async function parseFile(buffer: ArrayBuffer, filename = "") {
+export async function parseFile(buffer: ArrayBuffer, filename = ""): Promise<{ columns: string[]; drafts: ImportDraft[] }> {
   if (/\.pdf$/i.test(filename)) return parsePdfFile(buffer);
   const workbook = XLSX.read(buffer, { type: "array", raw: false });
   const sheet = workbook.Sheets[workbook.SheetNames[0]];
@@ -84,7 +85,7 @@ export async function parseFile(buffer: ArrayBuffer, filename = "") {
     return column ? String(row[column] ?? "").trim() || null : null;
   };
   const seenOrders = new Set<string>();
-  const drafts = records.map((row) => {
+  const drafts: ImportDraft[] = records.map((row) => {
     const name = text(row, "name") || "";
     const addressLine = text(row, "addressLine") || "";
     const orderNumber = text(row, "orderNumber");

@@ -16,7 +16,7 @@ type Row = {
 };
 
 type ImportPreview = {
-  filename: string;
+  filenames: string[];
   columns: string[];
   drafts: Row[];
 };
@@ -71,7 +71,7 @@ export default function ImportClient() {
     <form action={preview} className="card">
       <h1>Orders importeren</h1>
       <p className="muted">Upload een CSV, Excelbestand of originele PDF-order, reparatiebon of factuur. De app leest eerst de tekst uit en laat altijd een controle zien voordat iets wordt opgeslagen.</p>
-      <label>Bestand<input name="file" type="file" accept=".csv,.xlsx,.xls,.pdf,application/pdf" required /></label>
+      <label>Bestanden<input name="file" type="file" accept=".csv,.xlsx,.xls,.pdf,application/pdf" multiple required /><small className="muted">U kunt meerdere PDF-, Excel- en CSV-bestanden tegelijk kiezen.</small></label>
       <button disabled={isBusy}>{isBusy ? "Controleren…" : "Bestand controleren"}</button>
     </form>
 
@@ -82,7 +82,7 @@ export default function ImportClient() {
 
     {previewData && <section className="card" style={{ marginTop: 20 }}>
       <h2>Controle vóór import</h2>
-      <p>{previewData.drafts.length} regels gevonden. {invalidRows} regels met fouten worden overgeslagen.</p>
+      <p>{previewData.filenames.length} bestand{previewData.filenames.length === 1 ? "" : "en"} · {previewData.drafts.length} regels gevonden. {invalidRows} regels met fouten worden overgeslagen.</p>
       <p className="muted">Kolommen: {previewData.columns.join(", ")}</p>
       <table>
         <thead><tr><th>Soort</th><th>Order</th><th>Klant</th><th>Vestiging</th><th>Adres</th><th>Controle</th></tr></thead>

@@ -10,10 +10,20 @@ export async function POST(request: Request) {
   const { data: { user } } = await db.auth.getUser();
   if (!user) return NextResponse.json({ error: "Niet ingelogd" }, { status: 401 });
   const form = await request.formData();
-  const file = form.get("file");
-  if (!(file instanceof File) || !/\.(csv|xlsx|xls|pdf)$/i.test(file.name)) return NextResponse.json({ error: "Kies een CSV-, Excel- of PDF-bestand." }, { status: 400 });
-  if (file.size > 12 * 1024 * 1024) return NextResponse.json({ error: "Het bestand mag maximaal 12 MB zijn." }, { status: 400 });
-  try { return NextResponse.json({ filename: file.name, ...await parseFile(await file.arrayBuffer(), file.name) }); }
+  const files = form.getAll("file").filter((file): file is File => file instanceof File);
+  if (!files.length || files.some((file) => !/\.(csv|xlsx|xls|pdf)$/i.test(file.name))) return NextResponse.json({ error: "Kies CSV-, Excel- of PDF-bestanden." }, { status: 400 });
+  if (files.length > 30) return NextResponse.json({ error: "Kies maximaal 30 bestanden tegelijk." }, { status: 400 });
+  if (files.some((file) => file.size > 12 * 1024 * 1024) || files.reduce((total, file) => total + file.size, 0) > 30 * 1024 * 1024) return NextResponse.json({ error: "Elk bestand mag maximaal 12 MB zijn; samen maximaal 30 MB." }, { status: 400 });
+  try {
+    const parsedFiles = await Promise.all(files.map(async (file) => ({ filename: file.name, parsed: await parseFile(await file.arrayBuffer(), file.name) })));
+    const seenOrders = new Set<string>();
+    const drafts = parsedFiles.flatMap(({ parsed }) => parsed.drafts).map((row) => {
+      if (row.orderNumber && seenOrders.has(normalizedOrderNumber(row.orderNumber))) row.issues.push("Dubbel ordernummer in geselecteerde bestanden");
+      if (row.orderNumber) seenOrders.add(normalizedOrderNumber(row.orderNumber));
+      return row;
+    });
+    return NextResponse.json({ filenames: parsedFiles.map((item) => item.filename), columns: [...new Set(parsedFiles.flatMap((item) => item.parsed.columns))], drafts });
+  }
   catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : "Bestand niet leesbaar" }, { status: 400 }); }
 }
 
