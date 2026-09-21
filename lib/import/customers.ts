@@ -1,8 +1,9 @@
 import * as XLSX from "xlsx";
+import pdfParse from "pdf-parse/lib/pdf-parse.js";
 import { z } from "zod";
 
 export const draftSchema = z.object({
-  name: z.string().min(1).max(300), addressLine: z.string().min(1).max(500), customerNumber: z.string().nullable(), orderNumber: z.string().nullable(), postalCode: z.string().nullable(), city: z.string().nullable(), email: z.string().email().nullable(), phone: z.string().nullable(), workType: z.string().nullable(), branch: z.string().nullable(), durationMinutes: z.number().int().positive().nullable(), requiredPeople: z.number().int().min(1).max(4).nullable(), issues: z.array(z.string()),
+  name: z.string().min(1).max(300), addressLine: z.string().min(1).max(500), customerNumber: z.string().nullable(), orderNumber: z.string().nullable(), postalCode: z.string().nullable(), city: z.string().nullable(), email: z.string().email().nullable(), phone: z.string().nullable(), workType: z.string().nullable(), branch: z.string().nullable(), documentType: z.enum(["order", "repair", "invoice"]).default("order"), durationMinutes: z.number().int().positive().nullable(), requiredPeople: z.number().int().min(1).max(4).nullable(), issues: z.array(z.string()),
 });
 
 const aliases: Record<string, string[]> = {
@@ -11,7 +12,65 @@ const aliases: Record<string, string[]> = {
 const key = (value: string) => value.toLocaleLowerCase("nl-NL").replace(/[^a-z0-9]/g, "");
 export const normalizedOrderNumber = (value: string) => key(value);
 
-export function parseFile(buffer: ArrayBuffer) {
+const cleanPdfText = (value: string) => value.replace(/\r/g, "").replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+const firstMatch = (text: string, patterns: RegExp[]) => {
+  for (const pattern of patterns) {
+    const match = pattern.exec(text);
+    if (match?.[1]) return match[1].replace(/\s+/g, " ").trim();
+  }
+  return null;
+};
+
+const parsePdfChunk = (chunk: string) => {
+  const documentType = /reparatie|servicebon|storingsbon|reparatiebon/i.test(chunk) ? "repair" as const : /factuur|invoice/i.test(chunk) ? "invoice" as const : "order" as const;
+  const addressMatch = /\b([A-ZÀ-Ý][A-Za-zÀ-ÿ' .-]{1,70}?\s+\d+[A-Za-z0-9/-]*)\s*[\n, ]+\s*(\d{4}\s?[A-Z]{2})\s+([A-ZÀ-Ý][A-Za-zÀ-ÿ' .-]{1,60})/m.exec(chunk);
+  const name = firstMatch(chunk, [/(?:contactpersoon|klant(?:naam)?|naam)\s*[:\-]\s*([^\n]{2,120})/i]) || "";
+  const orderNumber = firstMatch(chunk, [/(?:ordernummer|order\s*nr\.?|opdrachtnummer|opdracht\s*nr\.?|identificatie|reparatienummer|bonnummer|factuurnummer)\s*[:#\-]?\s*([A-Za-z0-9][A-Za-z0-9./_-]{2,80})/i]);
+  const product = firstMatch(chunk, [/(?:werkzaamheden|werksoort|taak|omschrijving|product|apparaat|reparatie)\s*[:\-]\s*([^\n]{2,180})/i]);
+  const workType = documentType === "repair" ? `Reparatie${product ? ` - ${product}` : ""}` : product;
+  const branch = firstMatch(chunk, [/(?:filiaal|vestiging|winkel|afkomstig van)\s*[:\-]\s*([^\n]{2,100})/i]);
+  const phone = firstMatch(chunk, [/(?:telefoon|tel\.?|mobiel)\s*[:\-]\s*([+0-9() /-]{7,30})/i]);
+  const email = firstMatch(chunk, [/(?:e-?mail(?:adres)?)\s*[:\-]\s*([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})/i]);
+  const issues: string[] = [];
+  if (!name) issues.push("Klantnaam ontbreekt in PDF");
+  if (!addressMatch) issues.push("Adres ontbreekt in PDF");
+  if (!orderNumber) issues.push("Ordernummer ontbreekt in PDF");
+  return {
+    name,
+    addressLine: addressMatch?.[1] || "",
+    customerNumber: null,
+    orderNumber,
+    postalCode: addressMatch?.[2]?.toUpperCase() || null,
+    city: addressMatch?.[3] || null,
+    email,
+    phone,
+    workType,
+    branch,
+    documentType,
+    durationMinutes: null,
+    requiredPeople: documentType === "repair" ? 1 : null,
+    issues,
+  };
+};
+
+async function parsePdfFile(buffer: ArrayBuffer) {
+  const parsed = await pdfParse(Buffer.from(buffer));
+  const text = cleanPdfText(parsed.text);
+  if (!text) throw Error("Deze PDF bevat geen selecteerbare tekst. Gebruik een PDF met tekst of exporteer hem eerst vanuit Vendit.");
+  const starts = [...text.matchAll(/(?:ordernummer|order\s*nr\.?|opdrachtnummer|identificatie|reparatienummer|bonnummer|factuurnummer)\s*[:#\-]?\s*[A-Za-z0-9][A-Za-z0-9./_-]{2,80}/gi)].map((match) => match.index || 0);
+  const chunks = starts.length ? starts.map((start, index) => text.slice(start, starts[index + 1] || text.length)) : [text];
+  if (chunks.length > 5000) throw Error("PDF bevat te veel opdrachten.");
+  const seenOrders = new Set<string>();
+  const drafts = chunks.map(parsePdfChunk).map((row) => {
+    if (row.orderNumber && seenOrders.has(normalizedOrderNumber(row.orderNumber))) row.issues.push("Dubbel ordernummer in PDF");
+    if (row.orderNumber) seenOrders.add(normalizedOrderNumber(row.orderNumber));
+    return row;
+  });
+  return { columns: [`PDF - ${parsed.numpages} pagina${parsed.numpages === 1 ? "" : "'s"}`, "Automatisch herkende velden"], drafts };
+}
+
+export async function parseFile(buffer: ArrayBuffer, filename = "") {
+  if (/\.pdf$/i.test(filename)) return parsePdfFile(buffer);
   const workbook = XLSX.read(buffer, { type: "array", raw: false });
   const sheet = workbook.Sheets[workbook.SheetNames[0]];
   if (!sheet) throw Error("Geen werkblad gevonden.");
@@ -41,7 +100,7 @@ export function parseFile(buffer: ArrayBuffer) {
     if (email && !z.string().email().safeParse(email).success) issues.push("E-mailadres is ongeldig");
     if (orderNumber && seenOrders.has(normalizedOrderNumber(orderNumber))) issues.push("Dubbel ordernummer in bestand");
     if (orderNumber) seenOrders.add(normalizedOrderNumber(orderNumber));
-    return { name, addressLine, customerNumber: text(row, "customerNumber"), orderNumber, postalCode: text(row, "postalCode"), city: text(row, "city"), email, phone: text(row, "phone"), workType: text(row, "workType"), branch: text(row, "branch"), durationMinutes, requiredPeople, issues };
+    return { name, addressLine, customerNumber: text(row, "customerNumber"), orderNumber, postalCode: text(row, "postalCode"), city: text(row, "city"), email, phone: text(row, "phone"), workType: text(row, "workType"), branch: text(row, "branch"), documentType: "order" as const, durationMinutes, requiredPeople, issues };
   });
   return { columns, drafts };
 }

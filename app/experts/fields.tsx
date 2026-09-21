@@ -26,6 +26,7 @@ const defaultSkills = [
   "TV installatie", "TV wandmontage", "Audio & speakers", "Sonos & home cinema", "Beeld & video",
   "Witgoed", "Wasmachine & droger", "Koelkast & vriezer", "Vaatwasser", "Inbouwapparatuur",
   "Oven & magnetron", "Fornuis & kookplaat", "Afzuigkap", "Drempellevering",
+  "Reparatie witgoed", "Reparatie beeld & geluid", "Reparatie inbouwapparatuur", "Diagnose & service",
 ];
 const normalized = (value: string) => value.trim().toLocaleLowerCase("nl-NL");
 

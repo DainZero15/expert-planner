@@ -11,8 +11,9 @@ export async function POST(request: Request) {
   if (!user) return NextResponse.json({ error: "Niet ingelogd" }, { status: 401 });
   const form = await request.formData();
   const file = form.get("file");
-  if (!(file instanceof File) || !/\.(csv|xlsx|xls)$/i.test(file.name)) return NextResponse.json({ error: "Kies een CSV- of Excelbestand." }, { status: 400 });
-  try { return NextResponse.json({ filename: file.name, ...parseFile(await file.arrayBuffer()) }); }
+  if (!(file instanceof File) || !/\.(csv|xlsx|xls|pdf)$/i.test(file.name)) return NextResponse.json({ error: "Kies een CSV-, Excel- of PDF-bestand." }, { status: 400 });
+  if (file.size > 12 * 1024 * 1024) return NextResponse.json({ error: "Het bestand mag maximaal 12 MB zijn." }, { status: 400 });
+  try { return NextResponse.json({ filename: file.name, ...await parseFile(await file.arrayBuffer(), file.name) }); }
   catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : "Bestand niet leesbaar" }, { status: 400 }); }
 }
 
@@ -54,7 +55,7 @@ export async function PUT(request: Request) {
     for (const branch of createdBranches || []) branchIds.set(normalizedOrderNumber(branch.name), branch.id);
   }
   if (newOrders.length) {
-    const { error } = await db.from("orders").insert(newOrders.map((row) => ({ source_order_number: row.orderNumber, customer_id: customerIds.get(customerKey(row)), branch_id: row.branch ? branchIds.get(normalizedOrderNumber(row.branch)) || null : null, work_type: row.workType, duration_minutes: row.durationMinutes, required_people: row.requiredPeople || 1, metadata: { imported_via: "vendit", source_branch: row.branch || null } })));
+    const { error } = await db.from("orders").insert(newOrders.map((row) => ({ source_order_number: row.orderNumber, customer_id: customerIds.get(customerKey(row)), branch_id: row.branch ? branchIds.get(normalizedOrderNumber(row.branch)) || null : null, work_type: row.workType, duration_minutes: row.durationMinutes, required_people: row.requiredPeople || 1, metadata: { imported_via: "vendit", document_type: row.documentType, source_branch: row.branch || null } })));
     if (error) return NextResponse.json({ error: `Orders opslaan mislukt: ${error.message}` }, { status: 500 });
   }
   return NextResponse.json({ customers: newCustomers.size, orders: newOrders.length, branches: newBranchNames.length, skipped: parsed.data.length - newOrders.length });

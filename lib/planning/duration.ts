@@ -25,6 +25,7 @@ export const estimatedDurationMinutes = (workType: string | null | undefined, su
   if (/(koelkast|vriezer)/.test(work)) return 30;
   if (/(witgoed|wasmachine|droger|vaatwasser)/.test(work)) return 45;
   if (/(bezorg|lever)/.test(work)) return 30;
-  if (/(reparatie|service)/.test(work)) return 60;
+  if (/(reparatie|diagnose|servicebon)/.test(work)) return 90;
+  if (/(service)/.test(work)) return 60;
   return expertDefault > 0 ? expertDefault : 60;
 };

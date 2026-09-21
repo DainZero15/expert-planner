@@ -11,6 +11,7 @@ type Row = {
   postalCode: string | null;
   city: string | null;
   branch: string | null;
+  documentType: "order" | "repair" | "invoice";
   issues: string[];
 };
 
@@ -69,8 +70,8 @@ export default function ImportClient() {
   return <>
     <form action={preview} className="card">
       <h1>Orders importeren</h1>
-      <p className="muted">Upload eerst een CSV- of Excelbestand. Klanten worden één keer opgeslagen; losse ordernummers blijven aan die klant gekoppeld.</p>
-      <label>Bestand<input name="file" type="file" accept=".csv,.xlsx,.xls" required /></label>
+      <p className="muted">Upload een CSV, Excelbestand of originele PDF-order, reparatiebon of factuur. De app leest eerst de tekst uit en laat altijd een controle zien voordat iets wordt opgeslagen.</p>
+      <label>Bestand<input name="file" type="file" accept=".csv,.xlsx,.xls,.pdf,application/pdf" required /></label>
       <button disabled={isBusy}>{isBusy ? "Controleren…" : "Bestand controleren"}</button>
     </form>
 
@@ -84,8 +85,9 @@ export default function ImportClient() {
       <p>{previewData.drafts.length} regels gevonden. {invalidRows} regels met fouten worden overgeslagen.</p>
       <p className="muted">Kolommen: {previewData.columns.join(", ")}</p>
       <table>
-        <thead><tr><th>Order</th><th>Klant</th><th>Vestiging</th><th>Adres</th><th>Controle</th></tr></thead>
+        <thead><tr><th>Soort</th><th>Order</th><th>Klant</th><th>Vestiging</th><th>Adres</th><th>Controle</th></tr></thead>
         <tbody>{previewData.drafts.slice(0, 50).map((row, index) => <tr key={index}>
+          <td>{row.documentType === "repair" ? "Reparatie" : row.documentType === "invoice" ? "Factuur" : "Order"}</td>
           <td>{row.orderNumber || "—"}</td>
           <td>{row.name || "—"}</td>
           <td>{row.branch || "—"}</td>
