@@ -13,6 +13,9 @@ type Expert = {
   break_minutes: number;
   default_visit_minutes: number;
   preferences: unknown;
+  start_branch_id: string | null;
+  lunch_branch_id: string | null;
+  end_branch_id: string | null;
 };
 
 type Order = {
@@ -23,6 +26,7 @@ type Order = {
   duration_minutes: number | null;
   required_people: number;
   status: string;
+  branch_id: string | null;
   created_at: string;
 };
 
@@ -73,8 +77,8 @@ export async function POST(request: Request) {
   const week = dateKey(monday);
 
   const [{ data: orderData, error: orderError }, { data: expertData }, { data: confirmedData }] = await Promise.all([
-    db.from("orders").select("id,source_order_number,customer_id,work_type,duration_minutes,required_people,status,created_at").order("created_at").limit(1000),
-    db.from("experts").select("id,work_days,start_time,end_time,break_minutes,default_visit_minutes,preferences").order("name"),
+    db.from("orders").select("id,source_order_number,customer_id,work_type,duration_minutes,required_people,status,branch_id,created_at").order("created_at").limit(1000),
+    db.from("experts").select("id,work_days,start_time,end_time,break_minutes,default_visit_minutes,preferences,start_branch_id,lunch_branch_id,end_branch_id").order("name"),
     db.from("appointments").select("id,order_id,expert_id,starts_at,ends_at,status").eq("status", "confirmed"),
   ]);
   if (orderError) return NextResponse.redirect(new URL(`/planning?week=${week}&proposal=error`, request.url), 303);
@@ -181,10 +185,17 @@ export async function POST(request: Request) {
         const location = locationKey(customer);
         // Small score differences keep neighbouring postcodes together; one
         // day (1,440 minutes) always outweighs this local route preference.
-        const routeScore = currentLocation && location
+        const localRouteScore = currentLocation && location
           ? currentLocation === location ? -25 : 25
           : 0;
-        candidates.push({ expert, dayIndex, start, duration, routeScore, lunchBefore, lunchStart });
+        // Prefer orders from the branch where this expert is actually working:
+        // morning orders near the start branch, then orders from the branch
+        // where the bus is restocked during the break.
+        const activeBranch = lunchBefore || available >= lunchEarliest
+          ? expert.lunch_branch_id || expert.start_branch_id
+          : expert.start_branch_id;
+        const branchScore = order.branch_id && activeBranch ? (order.branch_id === activeBranch ? -35 : 15) : 0;
+        candidates.push({ expert, dayIndex, start, duration, routeScore: localRouteScore + branchScore, lunchBefore, lunchStart });
       }
     }
     return candidates.sort((left, right) => (

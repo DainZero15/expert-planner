@@ -44,9 +44,18 @@ export async function PUT(request: Request) {
     knownOrders.add(orderKey);
     return true;
   });
+  const { data: branchData, error: branchReadError } = await db.from("branches").select("id,name").limit(1000);
+  if (branchReadError) return NextResponse.json({ error: `Vestigingen controleren mislukt: ${branchReadError.message}` }, { status: 500 });
+  const branchIds = new Map((branchData || []).map((branch) => [normalizedOrderNumber(branch.name), branch.id]));
+  const newBranchNames = [...new Set(newOrders.map((row) => row.branch).filter((branch): branch is string => Boolean(branch)).filter((branch) => !branchIds.has(normalizedOrderNumber(branch))))];
+  if (newBranchNames.length) {
+    const { data: createdBranches, error: branchCreateError } = await db.from("branches").insert(newBranchNames.map((name) => ({ name }))).select("id,name");
+    if (branchCreateError) return NextResponse.json({ error: `Vestigingen opslaan mislukt: ${branchCreateError.message}` }, { status: 500 });
+    for (const branch of createdBranches || []) branchIds.set(normalizedOrderNumber(branch.name), branch.id);
+  }
   if (newOrders.length) {
-    const { error } = await db.from("orders").insert(newOrders.map((row) => ({ source_order_number: row.orderNumber, customer_id: customerIds.get(customerKey(row)), work_type: row.workType, duration_minutes: row.durationMinutes, required_people: row.requiredPeople || 1, metadata: { imported_via: "vendit" } })));
+    const { error } = await db.from("orders").insert(newOrders.map((row) => ({ source_order_number: row.orderNumber, customer_id: customerIds.get(customerKey(row)), branch_id: row.branch ? branchIds.get(normalizedOrderNumber(row.branch)) || null : null, work_type: row.workType, duration_minutes: row.durationMinutes, required_people: row.requiredPeople || 1, metadata: { imported_via: "vendit", source_branch: row.branch || null } })));
     if (error) return NextResponse.json({ error: `Orders opslaan mislukt: ${error.message}` }, { status: 500 });
   }
-  return NextResponse.json({ customers: newCustomers.size, orders: newOrders.length, skipped: parsed.data.length - newOrders.length });
+  return NextResponse.json({ customers: newCustomers.size, orders: newOrders.length, branches: newBranchNames.length, skipped: parsed.data.length - newOrders.length });
 }

@@ -7,6 +7,7 @@ import { WeekProposalButton } from "@/components/week-proposal-button";
 import { googleMapsRouteLinks, type RouteStop } from "@/lib/planning/google-maps";
 import { PlanningDragList } from "@/components/planning-drag-list";
 import { PlanningDropTarget } from "@/components/planning-drop-target";
+import { ResizableAppointment } from "@/components/resizable-appointment";
 import { estimatedDurationMinutes } from "@/lib/planning/duration";
 import { estimatedTravelMinutes, lunchMinutes, travelStartAfterVisit } from "@/lib/planning/workday";
 
@@ -72,7 +73,7 @@ export default async function PlanningPage({ searchParams }: { searchParams: Pro
 
   const appointments = (appointmentData ?? []) as Appointment[];
   const expertNames = new Map((expertData ?? []).map((expert) => [expert.id, expert.name]));
-  const confirmed = appointments.filter((appointment) => appointment.status === "confirmed");
+  const confirmed = appointments.filter((appointment) => appointment.status === "confirmed" && (!appointment.order_id || ordersById.has(appointment.order_id)));
   const visibleAppointments = appointments.filter((appointment) => (appointment.status === "confirmed" || appointment.selection_rank === 1) && (!appointment.order_id || ordersById.has(appointment.order_id)));
   const confirmedOrderIds = new Set(confirmed.map((appointment) => appointment.order_id).filter(Boolean));
   const todo = orders.filter((order) => !confirmedOrderIds.has(order.id));
@@ -82,21 +83,24 @@ export default async function PlanningPage({ searchParams }: { searchParams: Pro
     if (!todoByNumber.has(orderKey)) todoByNumber.set(orderKey, order);
   }
   const uniqueOrders = [...todoByNumber.values()];
-  const todoByCustomer = new Map<string, { order: Order; count: number; customer: Customer | undefined }>();
+  const todoByCustomer = new Map<string, { order: Order; count: number; customer: Customer | undefined; tasks: string[] }>();
   for (const order of uniqueOrders) {
     const customer = customers.get(order.customer_id);
     const customerKey = customer
       ? [customer.name, customer.address_line, customer.postal_code, customer.city].map((value) => String(value || "").trim().toLocaleLowerCase("nl-NL").replace(/\s+/g, " ")).join("|")
       : order.id;
     const existing = todoByCustomer.get(customerKey);
-    if (existing) existing.count += 1;
-    else todoByCustomer.set(customerKey, { order, count: 1, customer });
+    if (existing) {
+      existing.count += 1;
+      if (order.work_type && !existing.tasks.includes(order.work_type)) existing.tasks.push(order.work_type);
+    } else todoByCustomer.set(customerKey, { order, count: 1, customer, tasks: order.work_type ? [order.work_type] : [] });
   }
   const todoGroups = [...todoByCustomer.values()];
-  const draggableOrders = todoGroups.map(({ order, count, customer }) => ({
+  const draggableOrders = todoGroups.map(({ order, count, customer, tasks }) => ({
     id: order.id,
     title: customer?.name || "Klant zonder naam",
     detail: `${count} open order${count === 1 ? "" : "s"} · ${customer?.address_line || customer?.city || "adres onbekend"}`,
+    tasks: tasks.length ? tasks.join(" · ") : "Werkzaamheden nog bepalen",
   }));
   const hiddenDuplicates = todo.length - todoGroups.length;
   const byDay = new Map<string, typeof visibleAppointments>();
@@ -208,11 +212,13 @@ export default async function PlanningPage({ searchParams }: { searchParams: Pro
                 const estimatedMinutes = estimatedDurationMinutes(order?.work_type, order?.duration_minutes, durationMinutes);
                 const expertLane = dailyExpertIds.indexOf(appointment.expert_id || "team");
                 const href = appointment.order_id ? `/planning/order/${appointment.order_id}` : `/planning/customer/${appointment.customer_id}`;
-                return <Link key={appointment.id} href={href as never} className={`appointment ${appointment.status === "confirmed" ? "confirmed" : "proposal"}`} style={{ left: `${Math.max(0, start) / 60 / hours.length * 100}%`, top: `${8 + expertLane * laneHeight}px`, width: `calc(${Math.min(100 - Math.max(0, start) / 60 / hours.length * 100, durationMinutes / 60 / hours.length * 100)}% - 7px)` }}>
+                const left = `${Math.max(0, start) / 60 / hours.length * 100}%`;
+                const maxWidth = 100 - Math.max(0, start) / 60 / hours.length * 100;
+                return <ResizableAppointment key={appointment.id} appointmentId={appointment.id} orderId={appointment.order_id} href={href} className={`appointment ${appointment.status === "confirmed" ? "confirmed" : "proposal"}`} left={left} top={`${8 + expertLane * laneHeight}px`} maxWidth={maxWidth} durationMinutes={durationMinutes}>
                   <strong>{customers.get(appointment.customer_id)?.name || "Ingepland bezoek"}</strong>
                   <span className="appointment-task">{order?.work_type || "Werkzaamheden nog bepalen"}</span>
                   <span className="appointment-meta">{estimatedMinutes} min · {formatTime(appointment.starts_at)}–{formatTime(appointment.ends_at)}</span>
-                </Link>;
+                </ResizableAppointment>;
               })}
               {travelSegments.map((travel) => <div key={travel.id} title={`Geschatte reistijd: ${travel.minutes} minuten`} className="travel-block" style={{ left: `${Math.max(0, travel.startMinutes) / 60 / hours.length * 100}%`, top: `${8 + dailyExpertIds.indexOf(travel.expertId) * laneHeight}px`, width: `calc(${travel.minutes / 60 / hours.length * 100}% - 2px)` }}>
                 Reis ±{travel.minutes}m

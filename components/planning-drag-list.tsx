@@ -6,6 +6,7 @@ export type DraggableOrder = {
   id: string;
   title: string;
   detail: string;
+  tasks: string;
 };
 
 export function PlanningDragList({ orders }: { orders: DraggableOrder[] }) {
@@ -29,6 +30,7 @@ export function PlanningDragList({ orders }: { orders: DraggableOrder[] }) {
       >
         <strong>{order.title}</strong>
         <span>{order.detail}</span>
+        <span className="draggable-order-tasks">{order.tasks}</span>
       </article>)}
     </div>
   </aside>;

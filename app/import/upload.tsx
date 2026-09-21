@@ -10,6 +10,7 @@ type Row = {
   orderNumber: string | null;
   postalCode: string | null;
   city: string | null;
+  branch: string | null;
   issues: string[];
 };
 
@@ -58,7 +59,7 @@ export default function ImportClient() {
       return;
     }
 
-    setMessage(`${data.orders} orders opgeslagen bij ${data.customers} nieuwe klanten; ${data.skipped} overgeslagen.`);
+    setMessage(`${data.orders} orders opgeslagen bij ${data.customers} nieuwe klanten${data.branches ? ` en ${data.branches} nieuwe vestiging${data.branches === 1 ? "" : "en"}` : ""}; ${data.skipped} overgeslagen.`);
     setPreviewData(undefined);
     setIsSaved(true);
   }
@@ -83,10 +84,11 @@ export default function ImportClient() {
       <p>{previewData.drafts.length} regels gevonden. {invalidRows} regels met fouten worden overgeslagen.</p>
       <p className="muted">Kolommen: {previewData.columns.join(", ")}</p>
       <table>
-        <thead><tr><th>Order</th><th>Klant</th><th>Adres</th><th>Controle</th></tr></thead>
+        <thead><tr><th>Order</th><th>Klant</th><th>Vestiging</th><th>Adres</th><th>Controle</th></tr></thead>
         <tbody>{previewData.drafts.slice(0, 50).map((row, index) => <tr key={index}>
           <td>{row.orderNumber || "—"}</td>
           <td>{row.name || "—"}</td>
+          <td>{row.branch || "—"}</td>
           <td>{[row.addressLine, row.postalCode, row.city].filter(Boolean).join(", ") || "—"}</td>
           <td>{row.issues.join("; ") || "Klaar"}</td>
         </tr>)}</tbody>
