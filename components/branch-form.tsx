@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { expertStores, type ExpertStoreOption } from "@/lib/expert-stores";
 
 type ExpertStore = {
   name: string;
@@ -18,9 +19,10 @@ export function BranchForm() {
   const [found, setFound] = useState<ExpertStore | null>(null);
   const [message, setMessage] = useState("");
   const [searching, setSearching] = useState(false);
+  const suggestions = name.trim().length < 2 ? [] : expertStores.filter((store) => [store.name, store.city, ...(store.aliases || [])].some((value) => value.toLocaleLowerCase("nl-NL").includes(name.trim().toLocaleLowerCase("nl-NL")))).slice(0, 7);
 
-  async function findExpertStore() {
-    const query = name.trim() || city.trim();
+  async function findExpertStore(store?: ExpertStoreOption) {
+    const query = store?.city || name.trim() || city.trim();
     if (!query) {
       setMessage("Vul eerst bijvoorbeeld ‘Kaatsheuvel’ in bij naam of plaats.");
       return;
@@ -29,14 +31,14 @@ export function BranchForm() {
     setMessage("");
     setFound(null);
     try {
-      const response = await fetch(`/api/branches/expert-store?q=${encodeURIComponent(query)}`);
+      const response = await fetch(`/api/branches/expert-store?slug=${encodeURIComponent(store?.slug || query)}`);
       const result = await response.json() as { store?: ExpertStore; error?: string };
       if (!response.ok || !result.store) {
         setMessage(result.error || "Geen Expert-vestiging gevonden. Vul het adres handmatig in.");
         return;
       }
       setFound(result.store);
-      setName((current) => current || result.store!.name);
+      setName(result.store.name);
       setAddress(result.store.address);
       setPostalCode(result.store.postalCode);
       setCity(result.store.city);
@@ -49,10 +51,12 @@ export function BranchForm() {
   }
 
   return <form action="/api/branches" method="post" className="branch-form">
-    <label>Naam vestiging<input name="name" value={name} onChange={(event) => setName(event.target.value)} placeholder="Bijvoorbeeld: Kaatsheuvel" required /></label>
+    <label className="branch-store-search">Zoek Expert-vestiging<input name="name" value={name} onChange={(event) => { setName(event.target.value); setFound(null); setMessage(""); }} placeholder="Typ Drunen, Kaatsheuvel of Van de Griendt" required autoComplete="off" />
+      {suggestions.length > 0 && <div className="branch-suggestions">{suggestions.map((store) => <button key={store.slug} type="button" onClick={() => findExpertStore(store)}><strong>{store.name}</strong>{store.aliases?.length ? <span>Ook gevonden op: {store.aliases[0]}</span> : <span>{store.city}</span>}</button>)}</div>}
+    </label>
     <div className="branch-lookup">
-      <button type="button" className="secondary-button" onClick={findExpertStore} disabled={searching}>{searching ? "Zoeken…" : "Zoek Expert-adres"}</button>
-      <span>Typ alleen Kaatsheuvel, Drunen of een andere Expert-plaats.</span>
+      <button type="button" className="secondary-button" onClick={() => findExpertStore()} disabled={searching}>{searching ? "Zoeken…" : "Zoek gekozen Expert"}</button>
+      <span>De lijst kent alle Expert-plaatsen. Kies een suggestie om het adres direct in te vullen.</span>
     </div>
     <label>Adres<input name="address" value={address} onChange={(event) => setAddress(event.target.value)} placeholder="Straat en huisnummer" /></label>
     <div className="grid"><label>Postcode<input name="postalCode" value={postalCode} onChange={(event) => setPostalCode(event.target.value)} /></label><label>Plaats<input name="city" value={city} onChange={(event) => setCity(event.target.value)} placeholder="Drunen" /></label></div>
