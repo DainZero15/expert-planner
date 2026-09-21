@@ -1,5 +1,5 @@
 import * as XLSX from "xlsx";
-import pdfParse from "pdf-parse/lib/pdf-parse.js";
+import { PDFParse } from "pdf-parse";
 import { z } from "zod";
 
 export const draftSchema = z.object({
@@ -55,7 +55,22 @@ const parsePdfChunk = (chunk: string): ImportDraft => {
 };
 
 async function parsePdfFile(buffer: ArrayBuffer) {
-  const parsed = await pdfParse(Buffer.from(buffer));
+  // pdf-parse v2 uses the current PDF.js reader. It copes with more variants of
+  // PDF exports than the legacy parser (including many original order exports).
+  // A new byte array is deliberately created: PDF.js takes ownership of typed data.
+  const parser = new PDFParse({ data: new Uint8Array(buffer.slice(0)) });
+  let parsed: Awaited<ReturnType<PDFParse["getText"]>>;
+  try {
+    parsed = await parser.getText();
+  } catch (error) {
+    const details = error instanceof Error ? error.message : "";
+    if (/xref|cross-reference|invalid pdf|malformed/i.test(details)) {
+      throw Error("Deze PDF heeft een afwijkende technische opbouw en kon niet automatisch worden hersteld. Exporteer de order in Vendit nogmaals als PDF (via Afdrukken > Bewaar als PDF) en probeer die versie.");
+    }
+    throw Error("Deze PDF kon niet worden gelezen. Controleer of het bestand een niet-beveiligde PDF is en probeer het opnieuw.");
+  } finally {
+    await parser.destroy();
+  }
   const text = cleanPdfText(parsed.text);
   if (!text) throw Error("Deze PDF bevat geen selecteerbare tekst. Gebruik een PDF met tekst of exporteer hem eerst vanuit Vendit.");
   const starts = [...text.matchAll(/(?:ordernummer|order\s*nr\.?|opdrachtnummer|identificatie|reparatienummer|bonnummer|factuurnummer)\s*[:#\-]?\s*[A-Za-z0-9][A-Za-z0-9./_-]{2,80}/gi)].map((match) => match.index || 0);
@@ -67,7 +82,7 @@ async function parsePdfFile(buffer: ArrayBuffer) {
     if (row.orderNumber) seenOrders.add(normalizedOrderNumber(row.orderNumber));
     return row;
   });
-  return { columns: [`PDF - ${parsed.numpages} pagina${parsed.numpages === 1 ? "" : "'s"}`, "Automatisch herkende velden"], drafts };
+  return { columns: [`PDF - ${parsed.total} pagina${parsed.total === 1 ? "" : "'s"}`, "Automatisch herkende velden"], drafts };
 }
 
 export async function parseFile(buffer: ArrayBuffer, filename = ""): Promise<{ columns: string[]; drafts: ImportDraft[] }> {
