@@ -152,7 +152,7 @@ export async function POST(request: Request) {
   let skipped = 0;
   const proposals: Array<{ customer_id: string; expert_id: string; order_id: string; starts_at: string; ends_at: string; selection_rank: number; status: string }> = [];
 
-  type Candidate = { expert: Expert; dayIndex: number; start: number; duration: number; routeScore: number; lunchBefore: boolean };
+  type Candidate = { expert: Expert; dayIndex: number; start: number; duration: number; routeScore: number; lunchBefore: boolean; lunchStart: number | null };
   // Without a paid routing provider we cannot claim an exact driving duration.
   // Instead, the proposal keeps consecutive visits in the same postcode/city
   // area together whenever that does not make the calendar less efficient.
@@ -169,10 +169,13 @@ export async function POST(request: Request) {
         const available = nextAvailable.get(expert.id)?.get(day.date) || workdayStart;
         const slotKey = `${expert.id}:${day.date}`;
         const requiresLunch = !lunchTaken.get(slotKey);
-        // Keep the day contiguous. A very long job gets the break before it;
-        // otherwise the break follows the first job that reaches late morning.
+        // Keep the day contiguous. When the next visit needs the lunch break
+        // first, the break starts at the real end of the previous travel
+        // buffer (but never before 11:30). The next visit therefore starts at
+        // the exact end of that break — for example 12:45, not a fixed 13:00.
         const lunchBefore = requiresLunch && (available >= lunchEarliest || available + duration > lunchLatest);
-        const start = nextWorkableStart(available + (lunchBefore ? lunchMinutes : 0), duration);
+        const lunchStart = lunchBefore ? Math.max(available, lunchEarliest) : null;
+        const start = nextWorkableStart(lunchStart === null ? available : lunchStart + lunchMinutes, duration);
         if (!hasRoomForVisit(start, duration)) continue;
         const currentLocation = lastLocationByExpertDay.get(`${expert.id}:${day.date}`);
         const location = locationKey(customer);
@@ -181,7 +184,7 @@ export async function POST(request: Request) {
         const routeScore = currentLocation && location
           ? currentLocation === location ? -25 : 25
           : 0;
-        candidates.push({ expert, dayIndex, start, duration, routeScore, lunchBefore });
+        candidates.push({ expert, dayIndex, start, duration, routeScore, lunchBefore, lunchStart });
       }
     }
     return candidates.sort((left, right) => (

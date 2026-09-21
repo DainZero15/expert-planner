@@ -12,6 +12,7 @@ import { estimatedTravelMinutes, lunchMinutes, travelStartAfterVisit } from "@/l
 
 const hours = Array.from({ length: 24 }, (_, index) => index);
 const deliveryDays = [1, 2, 3, 4, 5, 6, 7];
+const laneHeight = 102;
 const dayName = new Intl.DateTimeFormat("nl-NL", { weekday: "long", day: "numeric", month: "short" });
 const validDate = (value: unknown) => typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : amsterdamDate(new Date());
 
@@ -191,7 +192,7 @@ export default async function PlanningPage({ searchParams }: { searchParams: Pro
             return [];
           });
           const isExceptionDay = weekDay === 1 || weekDay === 7;
-          return <div className="calendar-row" key={key} style={{ minHeight: `${Math.max(106, dailyExpertIds.length * 62 + 14)}px` }}>
+          return <div className="calendar-row" key={key} style={{ minHeight: `${Math.max(106, dailyExpertIds.length * laneHeight + 14)}px` }}>
             <div className="day-label">
               <strong>{dayName.format(day)}</strong>
               <span>{items.length ? `${items.length} afspraak${items.length === 1 ? "" : "en"}` : isExceptionDay ? "Op aanvraag" : "Vrij"}</span>
@@ -207,16 +208,16 @@ export default async function PlanningPage({ searchParams }: { searchParams: Pro
                 const estimatedMinutes = estimatedDurationMinutes(order?.work_type, order?.duration_minutes, durationMinutes);
                 const expertLane = dailyExpertIds.indexOf(appointment.expert_id || "team");
                 const href = appointment.order_id ? `/planning/order/${appointment.order_id}` : `/planning/customer/${appointment.customer_id}`;
-                return <Link key={appointment.id} href={href as never} className={`appointment ${appointment.status === "confirmed" ? "confirmed" : "proposal"}`} style={{ left: `${Math.max(0, start) / 60 / hours.length * 100}%`, top: `${8 + expertLane * 62}px`, width: `calc(${Math.min(100 - Math.max(0, start) / 60 / hours.length * 100, durationMinutes / 60 / hours.length * 100)}% - 7px)` }}>
+                return <Link key={appointment.id} href={href as never} className={`appointment ${appointment.status === "confirmed" ? "confirmed" : "proposal"}`} style={{ left: `${Math.max(0, start) / 60 / hours.length * 100}%`, top: `${8 + expertLane * laneHeight}px`, width: `calc(${Math.min(100 - Math.max(0, start) / 60 / hours.length * 100, durationMinutes / 60 / hours.length * 100)}% - 7px)` }}>
                   <strong>{customers.get(appointment.customer_id)?.name || "Ingepland bezoek"}</strong>
-                  <span className="appointment-task">{order?.work_type || "Werkzaamheden"} · {estimatedMinutes} min</span>
-                  <span>{formatTime(appointment.starts_at)}–{formatTime(appointment.ends_at)}</span>
+                  <span className="appointment-task">{order?.work_type || "Werkzaamheden nog bepalen"}</span>
+                  <span className="appointment-meta">{estimatedMinutes} min · {formatTime(appointment.starts_at)}–{formatTime(appointment.ends_at)}</span>
                 </Link>;
               })}
-              {travelSegments.map((travel) => <div key={travel.id} title={`Geschatte reistijd: ${travel.minutes} minuten`} className="travel-block" style={{ left: `${Math.max(0, travel.startMinutes) / 60 / hours.length * 100}%`, top: `${8 + dailyExpertIds.indexOf(travel.expertId) * 62}px`, width: `calc(${travel.minutes / 60 / hours.length * 100}% - 2px)` }}>
+              {travelSegments.map((travel) => <div key={travel.id} title={`Geschatte reistijd: ${travel.minutes} minuten`} className="travel-block" style={{ left: `${Math.max(0, travel.startMinutes) / 60 / hours.length * 100}%`, top: `${8 + dailyExpertIds.indexOf(travel.expertId) * laneHeight}px`, width: `calc(${travel.minutes / 60 / hours.length * 100}% - 2px)` }}>
                 Reis ±{travel.minutes}m
               </div>)}
-              {lunchBlocks.map((lunch) => <div key={`${lunch.expertId}-lunch`} className="lunch-block" style={{ left: `${lunch.startMinutes / 60 / hours.length * 100}%`, top: `${42 + lunch.lane * 62}px`, width: `calc(${lunchMinutes / 60 / hours.length * 100}% - 3px)` }}>Pauze · 60m</div>)}
+              {lunchBlocks.map((lunch) => <div key={`${lunch.expertId}-lunch`} className="lunch-block" style={{ left: `${lunch.startMinutes / 60 / hours.length * 100}%`, top: `${76 + lunch.lane * laneHeight}px`, width: `calc(${lunchMinutes / 60 / hours.length * 100}% - 3px)` }}>Pauze · 60m</div>)}
             </PlanningDropTarget>
           </div>;
         })}
