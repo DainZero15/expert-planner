@@ -59,15 +59,11 @@ async function parsePdfFile(buffer: ArrayBuffer) {
   // A new byte array is deliberately created: PDF.js takes ownership of typed data.
   // Loading is deliberately deferred until a PDF is uploaded. This keeps the
   // normal planner and spreadsheet-import routes independent from the PDF engine.
-  // PDF.js expects these browser primitives. In Vercel's Node runtime they are
-  // supplied by the native canvas package before the parser is loaded.
-  const canvas = await import("@napi-rs/canvas");
-  const runtime = globalThis as Record<string, unknown>;
-  runtime.DOMMatrix ??= canvas.DOMMatrix;
-  runtime.Path2D ??= canvas.Path2D;
-  runtime.ImageData ??= canvas.ImageData;
+  // The package worker installs the CanvasFactory and browser primitives before
+  // PDF.js loads, which is required in Vercel's serverless Node runtime.
+  const { CanvasFactory } = await import("pdf-parse/worker");
   const { PDFParse } = await import("pdf-parse");
-  const parser = new PDFParse({ data: new Uint8Array(buffer.slice(0)) });
+  const parser = new PDFParse({ data: new Uint8Array(buffer.slice(0)), CanvasFactory });
   let parsed: { text: string; total: number };
   try {
     parsed = await parser.getText();
