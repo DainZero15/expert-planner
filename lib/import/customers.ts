@@ -21,10 +21,14 @@ const firstMatch = (text: string, patterns: RegExp[]) => {
   return null;
 };
 
-const branchFromWorkOrderHeader = (text: string) => firstMatch(text, [
-  /rittenlijst\s*(?:planning)?\s*[-–:]?\s*([A-Za-zÀ-ÿ' .-]{2,80})/i,
-  /planning\s+([A-Za-zÀ-ÿ' .-]{2,80})\s*(?:\n|\d|$)/i,
-]);
+const workOrderHeaders = (text: string) => [...text.matchAll(/(?:rittenlijst\s*(?:planning)?\s*[-–:]?|planning\s+)([A-Za-zÀ-ÿ' .-]{2,80})(?=\s*(?:\n|\d|$))/gi)]
+  .map((match) => ({ index: match.index || 0, branch: match[1].replace(/\s+/g, " ").trim() }))
+  .filter((header) => header.branch.length > 1);
+
+const branchAtPosition = (headers: { index: number; branch: string }[], position: number) => {
+  const preceding = headers.filter((header) => header.index <= position);
+  return preceding.length ? preceding[preceding.length - 1].branch : null;
+};
 
 const cleanMemo = (value: string) => value.replace(/\bXXX\b\s*[:\-]?\s*/gi, "").replace(/\s+/g, " ").trim();
 
@@ -150,16 +154,21 @@ async function parsePdfFile(buffer: ArrayBuffer) {
   }
   const text = cleanPdfText(parsed.text);
   if (!text) throw Error("Deze PDF bevat geen selecteerbare tekst. Gebruik een PDF met tekst of exporteer hem eerst vanuit Vendit.");
-  const workOrderBranch = branchFromWorkOrderHeader(text);
+  const isWorkOrder = /rittenlijst|werkbon/i.test(text);
+  const headers = isWorkOrder ? workOrderHeaders(text) : [];
   const labelledStarts = [...text.matchAll(/(?:ordernummer|order\s*nr\.?|opdrachtnummer|identificatie|reparatienummer|bonnummer|factuurnummer)\s*[:#\-]?\s*[A-Za-z0-9][A-Za-z0-9./_-]{2,80}/gi)].map((match) => match.index || 0);
-  const workOrderStarts = /rittenlijst|werkbon/i.test(text)
+  const workOrderStarts = isWorkOrder
     ? tableWorkOrderStarts(text)
     : [];
-  const starts = [...new Set([...labelledStarts, ...workOrderStarts])].sort((left, right) => left - right);
-  const chunks = starts.length ? starts.map((start, index) => text.slice(start, starts[index + 1] || text.length)) : [text];
+  // A workbon has its own table rows. Do not also split it on arbitrary
+  // "opdrachtnummer" text in a memo: that would create a false extra order.
+  const starts = [...new Set(isWorkOrder ? workOrderStarts : labelledStarts)].sort((left, right) => left - right);
+  const chunks = starts.length
+    ? starts.map((start, index) => ({ start, text: text.slice(start, starts[index + 1] || text.length) }))
+    : [{ start: 0, text }];
   if (chunks.length > 5000) throw Error("PDF bevat te veel opdrachten.");
   const seenOrders = new Set<string>();
-  const drafts: ImportDraft[] = chunks.map((chunk) => parsePdfChunk(chunk, workOrderBranch)).map((row) => {
+  const drafts: ImportDraft[] = chunks.map((chunk) => parsePdfChunk(chunk.text, branchAtPosition(headers, chunk.start))).map((row) => {
     if (row.orderNumber && seenOrders.has(normalizedOrderNumber(row.orderNumber))) row.issues.push("Dubbel ordernummer in PDF");
     if (row.orderNumber) seenOrders.add(normalizedOrderNumber(row.orderNumber));
     return row;

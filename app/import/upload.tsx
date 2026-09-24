@@ -91,12 +91,11 @@ export default function ImportClient() {
       <p>{previewData.filenames.length} bestand{previewData.filenames.length === 1 ? "" : "en"} · {previewData.drafts.length} regels gevonden. {invalidRows} regels met fouten worden overgeslagen.</p>
       <p className="muted">Kolommen: {previewData.columns.join(", ")}</p>
       <table>
-        <thead><tr><th>Soort</th><th>Order</th><th>Klant</th><th>Vestiging</th><th>Werkbon</th><th>Controle</th></tr></thead>
+        <thead><tr><th>Soort</th><th>Order</th><th>Klant</th><th>Werkbon</th><th>Controle</th></tr></thead>
         <tbody>{previewData.drafts.slice(0, 50).map((row, index) => <tr key={index}>
           <td>{row.documentSource === "work_order" ? `Werkbon · ${row.documentType === "repair" ? "reparatie" : "order"}` : row.documentType === "repair" ? "Reparatie" : row.documentType === "invoice" ? "Factuur" : "Order"}</td>
           <td>{row.orderNumber || "—"}</td>
           <td>{row.name || "—"}</td>
-          <td>{row.branch || "—"}</td>
           <td><strong>{row.workType || "Werkzaamheden nog bepalen"}</strong>{row.seller && <><br /><small>Verkoper: {row.seller}</small></>}{row.memo && <><br /><small>{row.memo}</small></>}{row.locationDetails && <><br /><small>{row.locationDetails}</small></>}</td>
           <td>{row.issues.join("; ") || "Klaar"}</td>
         </tr>)}</tbody>

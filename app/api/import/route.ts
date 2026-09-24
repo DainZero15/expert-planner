@@ -5,6 +5,10 @@ import { parseFile, draftSchema } from "@/lib/import/customers";
 import { normalizedOrderNumber } from "@/lib/import/order-number";
 
 const customerKey = (row: { name: string; addressLine: string; postalCode: string | null; city: string | null }) => [row.name, row.addressLine, row.postalCode, row.city].map((value) => String(value || "").trim().toLocaleLowerCase("nl-NL").replace(/\s+/g, " ")).join("|");
+// Preview rows with issues intentionally contain incomplete fields. They must be
+// accepted here so that only those rows are skipped instead of rejecting every
+// otherwise valid order in the same import.
+const importRowSchema = draftSchema.extend({ name: z.string().max(300), addressLine: z.string().max(500) });
 
 export async function POST(request: Request) {
   const db = await createClient();
@@ -33,7 +37,7 @@ export async function PUT(request: Request) {
   const { data: { user } } = await db.auth.getUser();
   if (!user) return NextResponse.json({ error: "Niet ingelogd" }, { status: 401 });
   const body = await request.json();
-  const parsed = z.array(draftSchema).max(5000).safeParse(body.rows);
+  const parsed = z.array(importRowSchema).max(5000).safeParse(body.rows);
   if (!parsed.success) return NextResponse.json({ error: "Ongeldige import" }, { status: 400 });
   const rows = parsed.data.filter((row) => !row.issues.length);
   const { data: existingData, error: customerReadError } = await db.from("customers").select("id,name,address_line,postal_code,city").neq("status", "archived").limit(5000);
