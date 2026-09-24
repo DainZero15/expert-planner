@@ -3,7 +3,7 @@ import { z } from "zod";
 import { normalizedOrderNumber } from "@/lib/import/order-number";
 
 export const draftSchema = z.object({
-  name: z.string().min(1).max(300), addressLine: z.string().min(1).max(500), customerNumber: z.string().nullable(), orderNumber: z.string().nullable(), postalCode: z.string().nullable(), city: z.string().nullable(), email: z.string().email().nullable(), phone: z.string().nullable(), workType: z.string().nullable(), branch: z.string().nullable(), documentType: z.enum(["order", "repair", "invoice"]).default("order"), durationMinutes: z.number().int().positive().nullable(), requiredPeople: z.number().int().min(1).max(4).nullable(), issues: z.array(z.string()),
+  name: z.string().min(1).max(300), addressLine: z.string().min(1).max(500), customerNumber: z.string().nullable(), orderNumber: z.string().nullable(), postalCode: z.string().nullable(), city: z.string().nullable(), email: z.string().email().nullable(), phone: z.string().nullable(), workType: z.string().nullable(), branch: z.string().nullable(), documentType: z.enum(["order", "repair", "invoice"]).default("order"), documentSource: z.enum(["standard", "work_order"]).default("standard"), seller: z.string().nullable().default(null), memo: z.string().nullable().default(null), products: z.array(z.string()).default([]), locationDetails: z.string().nullable().default(null), durationMinutes: z.number().int().positive().nullable(), requiredPeople: z.number().int().min(1).max(4).nullable(), issues: z.array(z.string()),
 });
 export type ImportDraft = z.infer<typeof draftSchema>;
 
@@ -21,16 +21,44 @@ const firstMatch = (text: string, patterns: RegExp[]) => {
   return null;
 };
 
-const parsePdfChunk = (chunk: string): ImportDraft => {
-  const documentType = /reparatie|servicebon|storingsbon|reparatiebon/i.test(chunk) ? "repair" as const : /factuur|invoice/i.test(chunk) ? "invoice" as const : "order" as const;
-  const addressMatch = /\b([A-ZÀ-Ý][A-Za-zÀ-ÿ' .-]{1,70}?\s+\d+[A-Za-z0-9/-]*)\s*[\n, ]+\s*(\d{4}\s?[A-Z]{2})\s+([A-ZÀ-Ý][A-Za-zÀ-ÿ' .-]{1,60})/m.exec(chunk);
-  const name = firstMatch(chunk, [/(?:contactpersoon|klant(?:naam)?|naam)\s*[:\-]\s*([^\n]{2,120})/i]) || "";
-  const orderNumber = firstMatch(chunk, [/(?:ordernummer|order\s*nr\.?|opdrachtnummer|opdracht\s*nr\.?|identificatie|reparatienummer|bonnummer|factuurnummer)\s*[:#\-]?\s*([A-Za-z0-9][A-Za-z0-9./_-]{2,80})/i]);
-  const product = firstMatch(chunk, [/(?:werkzaamheden|werksoort|taak|omschrijving|product|apparaat|reparatie)\s*[:\-]\s*([^\n]{2,180})/i]);
+const branchFromWorkOrderHeader = (text: string) => firstMatch(text, [
+  /rittenlijst\s*(?:planning)?\s*[-–:]?\s*([A-Za-zÀ-ÿ' .-]{2,80})/i,
+  /planning\s+([A-Za-zÀ-ÿ' .-]{2,80})\s*(?:\n|\d|$)/i,
+]);
+
+const cleanMemo = (value: string) => value.replace(/\bXXX\b\s*[:\-]?\s*/gi, "").replace(/\s+/g, " ").trim();
+
+const workOrderDetails = (chunk: string) => {
+  const xxxLines = [...chunk.matchAll(/(?:^|\n)\s*XXX\s*[:\-]?\s*([^\n]{3,500})/gim)].map((match) => cleanMemo(match[1]));
+  const memoLabel = firstMatch(chunk, [/(?:memo|opmerking(?:en)?|instructie(?:s)?|bijzonderheden)\s*[:\-]\s*([^\n]{3,500})/i]);
+  const memo = [...xxxLines, memoLabel].filter((item, index, items) => Boolean(item) && items.indexOf(item) === index).join(" · ") || null;
+  const locationDetails = firstMatch(chunk, [/((?:begane\s+grond|\d+(?:e|de|ste)?\s*verdieping|etage|trap(?:pen)?|lift|kelder|zolder)[^\n]{0,180})/i]);
+  const products = [...new Set([
+    ...[...chunk.matchAll(/(?:product|apparaat|model|artikel)\s*[:\-]\s*([^\n]{3,180})/gi)].map((match) => cleanMemo(match[1])),
+    ...[...chunk.matchAll(/(?:AEG|Bosch|Siemens|Miele|LG|Samsung|Sonos|Inventum)\s+[A-Z0-9][A-Z0-9._/-]{2,}/gi)].map((match) => match[0].trim()),
+  ].filter(Boolean))].slice(0, 12);
+  return { memo, products, locationDetails };
+};
+
+const estimatePeople = (documentType: "order" | "repair" | "invoice", text: string) => {
+  if (documentType === "repair") return 1;
+  if (/\b2\s*(?:man|personen|monteurs)\b|(?:droger|wasdroger).{0,70}(?:op|boven).{0,70}(?:wasmachine|wm)|(?:wasmachine|wm).{0,70}(?:droger|wasdroger)|stapelkit/i.test(text)) return 2;
+  return null;
+};
+
+const parsePdfChunk = (chunk: string, workOrderBranch: string | null = null): ImportDraft => {
+  const isWorkOrder = Boolean(workOrderBranch) || /rittenlijst|werkbon|\bxxx\b/i.test(chunk);
+  const documentType = /(?:^|\n)\s*R\s*\d{7,}\b|reparatie|servicebon|storingsbon|reparatiebon/i.test(chunk) ? "repair" as const : /factuur|invoice/i.test(chunk) ? "invoice" as const : "order" as const;
+  const addressMatch = /\b([A-ZÀ-Ý][A-Za-zÀ-ÿ' .-]{1,70}?\s+\d+[A-Za-z0-9/-]*)\s*[\n,; ]+\s*(\d{4}\s?[A-Z]{2})\s+([A-ZÀ-Ý][A-Za-zÀ-ÿ' .-]{1,60})/mi.exec(chunk);
+  const name = firstMatch(chunk, [/(?:contactpersoon|klant(?:naam)?|naam|geadresseerde|relatie)\s*[:\-]\s*([^\n]{2,120})/i]) || "";
+  const orderNumber = firstMatch(chunk, [/(?:ordernummer|order\s*nr\.?|opdrachtnummer|opdracht\s*nr\.?|identificatie|reparatienummer|bonnummer|factuurnummer)\s*[:#\-]?\s*([A-Za-z0-9][A-Za-z0-9./_-]{2,80})/i, /\b([OR]\s*\d{7,}|E-\d{6,}|\d{10,})\b/i]);
+  const product = firstMatch(chunk, [/(?:werkzaamheden|werksoort|taak|omschrijving|product|apparaat|reparatie|dienst)\s*[:\-]\s*([^\n]{2,180})/i]);
   const workType = documentType === "repair" ? `Reparatie${product ? ` - ${product}` : ""}` : product;
-  const branch = firstMatch(chunk, [/(?:filiaal|vestiging|winkel|afkomstig van)\s*[:\-]\s*([^\n]{2,100})/i]);
+  const branch = firstMatch(chunk, [/(?:filiaal|vestiging|winkel|afkomstig van)\s*[:\-]\s*([^\n]{2,100})/i]) || workOrderBranch;
   const phone = firstMatch(chunk, [/(?:telefoon|tel\.?|mobiel)\s*[:\-]\s*([+0-9() /-]{7,30})/i]);
   const email = firstMatch(chunk, [/(?:e-?mail(?:adres)?)\s*[:\-]\s*([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})/i]);
+  const seller = firstMatch(chunk, [/(?:verkoper|medewerker|verkoopcontact)\s*[:\-]\s*([^\n]{2,120})/i]);
+  const details = workOrderDetails(chunk);
   const issues: string[] = [];
   if (!name) issues.push("Klantnaam ontbreekt in PDF");
   if (!addressMatch) issues.push("Adres ontbreekt in PDF");
@@ -47,8 +75,13 @@ const parsePdfChunk = (chunk: string): ImportDraft => {
     workType,
     branch,
     documentType,
+    documentSource: isWorkOrder ? "work_order" : "standard",
+    seller,
+    memo: details.memo,
+    products: details.products,
+    locationDetails: details.locationDetails,
     durationMinutes: null,
-    requiredPeople: documentType === "repair" ? 1 : null,
+    requiredPeople: estimatePeople(documentType, `${workType || ""} ${details.memo || ""} ${details.products.join(" ")}`),
     issues,
   };
 };
@@ -78,11 +111,16 @@ async function parsePdfFile(buffer: ArrayBuffer) {
   }
   const text = cleanPdfText(parsed.text);
   if (!text) throw Error("Deze PDF bevat geen selecteerbare tekst. Gebruik een PDF met tekst of exporteer hem eerst vanuit Vendit.");
-  const starts = [...text.matchAll(/(?:ordernummer|order\s*nr\.?|opdrachtnummer|identificatie|reparatienummer|bonnummer|factuurnummer)\s*[:#\-]?\s*[A-Za-z0-9][A-Za-z0-9./_-]{2,80}/gi)].map((match) => match.index || 0);
+  const workOrderBranch = branchFromWorkOrderHeader(text);
+  const labelledStarts = [...text.matchAll(/(?:ordernummer|order\s*nr\.?|opdrachtnummer|identificatie|reparatienummer|bonnummer|factuurnummer)\s*[:#\-]?\s*[A-Za-z0-9][A-Za-z0-9./_-]{2,80}/gi)].map((match) => match.index || 0);
+  const workOrderStarts = /rittenlijst|werkbon/i.test(text)
+    ? [...text.matchAll(/(?:^|\n)\s*(?:[OR]\s*)?(?:E-\d{6,}|\d{8,})\b/gim)].map((match) => match.index || 0)
+    : [];
+  const starts = [...new Set([...labelledStarts, ...workOrderStarts])].sort((left, right) => left - right);
   const chunks = starts.length ? starts.map((start, index) => text.slice(start, starts[index + 1] || text.length)) : [text];
   if (chunks.length > 5000) throw Error("PDF bevat te veel opdrachten.");
   const seenOrders = new Set<string>();
-  const drafts: ImportDraft[] = chunks.map(parsePdfChunk).map((row) => {
+  const drafts: ImportDraft[] = chunks.map((chunk) => parsePdfChunk(chunk, workOrderBranch)).map((row) => {
     if (row.orderNumber && seenOrders.has(normalizedOrderNumber(row.orderNumber))) row.issues.push("Dubbel ordernummer in PDF");
     if (row.orderNumber) seenOrders.add(normalizedOrderNumber(row.orderNumber));
     return row;
@@ -121,7 +159,7 @@ export async function parseFile(buffer: ArrayBuffer, filename = ""): Promise<{ c
     if (email && !z.string().email().safeParse(email).success) issues.push("E-mailadres is ongeldig");
     if (orderNumber && seenOrders.has(normalizedOrderNumber(orderNumber))) issues.push("Dubbel ordernummer in bestand");
     if (orderNumber) seenOrders.add(normalizedOrderNumber(orderNumber));
-    return { name, addressLine, customerNumber: text(row, "customerNumber"), orderNumber, postalCode: text(row, "postalCode"), city: text(row, "city"), email, phone: text(row, "phone"), workType: text(row, "workType"), branch: text(row, "branch"), documentType: "order" as const, durationMinutes, requiredPeople, issues };
+    return { name, addressLine, customerNumber: text(row, "customerNumber"), orderNumber, postalCode: text(row, "postalCode"), city: text(row, "city"), email, phone: text(row, "phone"), workType: text(row, "workType"), branch: text(row, "branch"), documentType: "order" as const, documentSource: "standard" as const, seller: null, memo: null, products: [], locationDetails: null, durationMinutes, requiredPeople, issues };
   });
   return { columns, drafts };
 }

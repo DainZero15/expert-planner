@@ -66,7 +66,24 @@ export async function PUT(request: Request) {
     for (const branch of createdBranches || []) branchIds.set(normalizedOrderNumber(branch.name), branch.id);
   }
   if (newOrders.length) {
-    const { error } = await db.from("orders").insert(newOrders.map((row) => ({ source_order_number: row.orderNumber, customer_id: customerIds.get(customerKey(row)), branch_id: row.branch ? branchIds.get(normalizedOrderNumber(row.branch)) || null : null, work_type: row.workType, duration_minutes: row.durationMinutes, required_people: row.requiredPeople || 1, metadata: { imported_via: "vendit", document_type: row.documentType, source_branch: row.branch || null } })));
+    const { error } = await db.from("orders").insert(newOrders.map((row) => ({
+      source_order_number: row.orderNumber,
+      customer_id: customerIds.get(customerKey(row)),
+      branch_id: row.branch ? branchIds.get(normalizedOrderNumber(row.branch)) || null : null,
+      work_type: row.workType,
+      duration_minutes: row.durationMinutes,
+      required_people: row.requiredPeople || 1,
+      metadata: {
+        imported_via: row.documentSource === "work_order" ? "workbon" : "vendit",
+        document_type: row.documentType,
+        source_branch: row.branch || null,
+        seller: row.seller,
+        technician_memo: row.memo,
+        products: row.products,
+        location_details: row.locationDetails,
+        team_size_suggestion: row.requiredPeople,
+      },
+    })));
     if (error) return NextResponse.json({ error: `Orders opslaan mislukt: ${error.message}` }, { status: 500 });
   }
   return NextResponse.json({ customers: newCustomers.size, orders: newOrders.length, branches: newBranchNames.length, skipped: parsed.data.length - newOrders.length });

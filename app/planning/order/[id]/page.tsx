@@ -14,6 +14,15 @@ type Customer = {
   notes: string | null;
 };
 
+type WorkBonMetadata = {
+  imported_via?: string;
+  seller?: string | null;
+  technician_memo?: string | null;
+  products?: string[];
+  location_details?: string | null;
+  team_size_suggestion?: number | null;
+};
+
 export default async function OrderPlanningPage({ params }: { params: Promise<{ id: string }> }) {
   const db = await createClient();
   const { data: { user } } = await db.auth.getUser();
@@ -21,7 +30,7 @@ export default async function OrderPlanningPage({ params }: { params: Promise<{ 
 
   const { id } = await params;
   const { data: order } = await db.from("orders")
-    .select("id,source_order_number,customer_id,work_type,duration_minutes,required_people,status")
+    .select("id,source_order_number,customer_id,work_type,duration_minutes,required_people,status,metadata")
     .eq("id", id)
     .maybeSingle();
   if (!order) notFound();
@@ -37,6 +46,7 @@ export default async function OrderPlanningPage({ params }: { params: Promise<{ 
   const experts = expertData ?? [];
   const options = optionData ?? [];
   const selected = new Set((teamData ?? []).map((teamMember) => teamMember.expert_id));
+  const workBon = (order.metadata || {}) as WorkBonMetadata;
 
   return <main className="shell">
     <header className="topbar">
@@ -50,6 +60,13 @@ export default async function OrderPlanningPage({ params }: { params: Promise<{ 
       <p>{[customer?.address_line, customer?.postal_code, customer?.city].filter(Boolean).join(", ")}</p>
       {customer?.phone && <p>Telefoon: {customer.phone}</p>}
       <p><strong>{order.work_type || "Werksoort nog bepalen"}</strong> · {order.duration_minutes || 60} minuten · {order.required_people} persoon{order.required_people === 1 ? "" : "en"} nodig</p>
+      {(workBon.seller || workBon.technician_memo || workBon.products?.length || workBon.location_details) && <div className="workbon-details">
+        <h2>Werkbon</h2>
+        {workBon.seller && <p><strong>Verkoper:</strong> {workBon.seller} <span className="muted">(geen monteur)</span></p>}
+        {workBon.products?.length ? <p><strong>Producten:</strong> {workBon.products.join(" · ")}</p> : null}
+        {workBon.location_details && <p><strong>Locatie:</strong> {workBon.location_details}</p>}
+        {workBon.technician_memo && <p><strong>Instructie voor de monteur:</strong> {workBon.technician_memo}</p>}
+      </div>}
     </section>
 
     <section className="card" style={{ marginTop: 20 }}>
