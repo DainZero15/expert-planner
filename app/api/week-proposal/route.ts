@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { addDays, amsterdamDate, dateKey, mondayOfWeek } from "@/lib/planning/week";
+import { addDays, amsterdamDate, dateKey, formatTime, mondayOfWeek } from "@/lib/planning/week";
 import { estimatedDurationMinutes } from "@/lib/planning/duration";
 import { normalizedOrderNumber } from "@/lib/import/order-number";
-import { hasRoomForVisit, lunchEarliest, lunchLatest, lunchMinutes, nextAvailableAfterVisit, nextWorkableStart, workdayStart } from "@/lib/planning/workday";
+import { lunchEarliest, lunchLatest, lunchMinutes, nextAvailableAfterVisit, nextWorkableStart, workdayEnd, workdayStart } from "@/lib/planning/workday";
 
 type Expert = {
   id: string;
@@ -43,6 +43,17 @@ const minuteOfDay = (time: string) => {
   const [hours = "8", minutes = "0"] = time.slice(0, 5).split(":");
   return Number(hours) * 60 + Number(minutes);
 };
+const categoriesFor = (value: string | null | undefined) => {
+  const text = (value || "").toLocaleLowerCase("nl-NL");
+  const categories = new Set<string>();
+  if (/(reparatie|diagnose|service|storing)/.test(text)) categories.add("repair");
+  if (/(bezorg|lever|drempel)/.test(text)) categories.add("delivery");
+  if (/(televisie|\btv\b|beeld|video)/.test(text)) categories.add("tv");
+  if (/(audio|speaker|sonos|home cinema|soundbar|luidspreker)/.test(text)) categories.add("audio");
+  if (/(wasmachine|droger|vaatwasser|koelkast|vriezer|witgoed)/.test(text)) categories.add("whitegoods");
+  if (/(inbouw|oven|magnetron|kookplaat|fornuis|afzuigkap)/.test(text)) categories.add("built-in");
+  return categories;
+};
 const hasSkill = (expert: Expert, workType: string | null) => {
   const skills = expert.preferences && typeof expert.preferences === "object" && Array.isArray((expert.preferences as { skills?: unknown }).skills)
     ? (expert.preferences as { skills: unknown[] }).skills.filter((skill): skill is string => typeof skill === "string")
@@ -52,7 +63,19 @@ const hasSkill = (expert: Expert, workType: string | null) => {
   // being set up, without overriding an explicit specialist mismatch.
   if (!workType || skills.length === 0) return true;
   const work = workType.toLocaleLowerCase("nl-NL").trim();
-  return skills.some((skill) => skill.toLocaleLowerCase("nl-NL").includes(work) || work.includes(skill.toLocaleLowerCase("nl-NL")));
+  const workCategories = categoriesFor(workType);
+  // A repair may mention an appliance such as a dishwasher, but must still go
+  // to a repair/service specialist rather than an installation-only expert.
+  if (workCategories.has("repair")) return skills.some((skill) => {
+    const normalizedSkill = skill.toLocaleLowerCase("nl-NL").trim();
+    return normalizedSkill.includes(work) || work.includes(normalizedSkill) || categoriesFor(skill).has("repair");
+  });
+  return skills.some((skill) => {
+    const normalizedSkill = skill.toLocaleLowerCase("nl-NL").trim();
+    if (normalizedSkill.includes(work) || work.includes(normalizedSkill)) return true;
+    const skillCategories = categoriesFor(skill);
+    return [...skillCategories].some((category) => workCategories.has(category));
+  });
 };
 const timestamp = (day: string, minutes: number) => {
   const hours = String(Math.floor(minutes / 60)).padStart(2, "0");
@@ -64,6 +87,10 @@ const locationKey = (customer: Customer | undefined) => {
   const postal = String(customer.postal_code || "").replace(/\s/g, "").slice(0, 4).toLocaleLowerCase("nl-NL");
   const city = String(customer.city || "").trim().toLocaleLowerCase("nl-NL");
   return postal || city;
+};
+const minutesInAmsterdam = (iso: string) => {
+  const [hours, minutes] = formatTime(iso).split(":").map(Number);
+  return hours * 60 + minutes;
 };
 
 export async function POST(request: Request) {
@@ -138,7 +165,7 @@ export async function POST(request: Request) {
   for (const expert of experts) {
     const expertSlots = new Map<string, number>();
     for (const day of days) {
-      expertSlots.set(day.date, workdayStart);
+      expertSlots.set(day.date, Math.max(workdayStart, minuteOfDay(expert.start_time || "09:00")));
       lunchTaken.set(`${expert.id}:${day.date}`, false);
     }
     nextAvailable.set(expert.id, expertSlots);
@@ -147,8 +174,7 @@ export async function POST(request: Request) {
     const day = amsterdamDate(new Date(appointment.starts_at));
     const expertSlots = nextAvailable.get(appointment.expert_id);
     if (!expertSlots?.has(day)) continue;
-    const end = new Date(appointment.ends_at);
-    const endMinutes = end.getUTCHours() * 60 + end.getUTCMinutes();
+    const endMinutes = minutesInAmsterdam(appointment.ends_at);
     expertSlots.set(day, Math.max(expertSlots.get(day) || 0, endMinutes));
   }
 
@@ -180,7 +206,8 @@ export async function POST(request: Request) {
         const lunchBefore = requiresLunch && (available >= lunchEarliest || available + duration > lunchLatest);
         const lunchStart = lunchBefore ? Math.max(available, lunchEarliest) : null;
         const start = nextWorkableStart(lunchStart === null ? available : lunchStart + lunchMinutes, duration);
-        if (!hasRoomForVisit(start, duration)) continue;
+        const expertEnd = Math.min(workdayEnd, minuteOfDay(expert.end_time || "18:00"));
+        if (start + duration > expertEnd) continue;
         const currentLocation = lastLocationByExpertDay.get(`${expert.id}:${day.date}`);
         const location = locationKey(customer);
         // Small score differences keep neighbouring postcodes together; one
@@ -254,7 +281,8 @@ export async function POST(request: Request) {
       // Plan B and C deliberately get a later start where possible, making
       // the offered choices useful even when they fall on a similar route.
       const shiftedStart = rank === 1 ? option.start : nextWorkableStart(option.start + (rank - 1) * 60, option.duration);
-      const optionStart = hasRoomForVisit(shiftedStart, option.duration) ? shiftedStart : option.start;
+      const optionEnd = Math.min(workdayEnd, minuteOfDay(option.expert.end_time || "18:00"));
+      const optionStart = shiftedStart + option.duration <= optionEnd ? shiftedStart : option.start;
       proposals.push({
         customer_id: order.customer_id,
         expert_id: option.expert.id,

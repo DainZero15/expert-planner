@@ -8,6 +8,7 @@ import { googleMapsRouteLinks, type RouteStop } from "@/lib/planning/google-maps
 import { PlanningDragList } from "@/components/planning-drag-list";
 import { PlanningDropTarget } from "@/components/planning-drop-target";
 import { ResizableAppointment } from "@/components/resizable-appointment";
+import { PlannerDayControls } from "@/components/planner-day-controls";
 import { estimatedDurationMinutes } from "@/lib/planning/duration";
 import { estimatedTravelMinutes, lunchMinutes, travelStartAfterVisit } from "@/lib/planning/workday";
 
@@ -158,6 +159,7 @@ export default async function PlanningPage({ searchParams }: { searchParams: Pro
 
     <div className="planner-board">
       <div className="calendar-scroll">
+        <PlannerDayControls />
         <section className="week-calendar" aria-label="Weekplanner">
         <div className="calendar-head">
           <div className="day-label">Dag</div>
@@ -196,13 +198,19 @@ export default async function PlanningPage({ searchParams }: { searchParams: Pro
             return [];
           });
           const isExceptionDay = weekDay === 1 || weekDay === 7;
-          return <div className="calendar-row" key={key} style={{ minHeight: `${Math.max(106, dailyExpertIds.length * laneHeight + 14)}px` }}>
-            <div className="day-label">
-              <strong>{dayName.format(day)}</strong>
-              <span>{items.length ? `${items.length} afspraak${items.length === 1 ? "" : "en"}` : isExceptionDay ? "Op aanvraag" : "Vrij"}</span>
-              {dailyExperts.length > 0 && <small className="day-experts">Monteurs: {dailyExperts.join(", ")}</small>}
-            </div>
-            <PlanningDropTarget date={key}>
+          return <details className="planner-day" data-planner-day key={key} open={items.length > 0}>
+            <summary className="calendar-row planner-day-summary">
+              <div className="day-label">
+                <strong>{dayName.format(day)}</strong>
+                <span>{items.length ? `${items.length} afspraak${items.length === 1 ? "" : "en"}` : isExceptionDay ? "Op aanvraag" : "Vrij"}</span>
+                {dailyExperts.length > 0 && <small className="day-experts">Monteurs: {dailyExperts.join(", ")}</small>}
+                <small className="day-toggle">Monteurs en blokken bekijken</small>
+              </div>
+              <div className="day-summary-hint">{items.length ? `${dailyExpertIds.length} monteur${dailyExpertIds.length === 1 ? "" : "s"} · klik om ${items.length ? "in of uit" : "uit"} te klappen` : "Klik om handmatig te plannen"}</div>
+            </summary>
+            <div className="calendar-row planner-day-detail" style={{ minHeight: `${Math.max(106, dailyExpertIds.length * laneHeight + 14)}px` }}>
+              <div className="day-label day-detail-label"><small>{dailyExperts.length ? `Routeblokken: ${dailyExperts.join(", ")}` : "Sleep een order hierheen om deze dag te vullen."}</small></div>
+              <PlanningDropTarget date={key}>
               {hours.map((hour) => <div className="hour-cell" key={hour} />)}
               {items.map((appointment) => {
                 const [startHours, startMinutes] = formatTime(appointment.starts_at).split(":").map(Number);
@@ -224,8 +232,9 @@ export default async function PlanningPage({ searchParams }: { searchParams: Pro
                 Reis ±{travel.minutes}m
               </div>)}
               {lunchBlocks.map((lunch) => <div key={`${lunch.expertId}-lunch`} className="lunch-block" style={{ left: `${lunch.startMinutes / 60 / hours.length * 100}%`, top: `${76 + lunch.lane * laneHeight}px`, width: `calc(${lunchMinutes / 60 / hours.length * 100}% - 3px)` }}>Pauze · 60m</div>)}
-            </PlanningDropTarget>
-          </div>;
+              </PlanningDropTarget>
+            </div>
+          </details>;
         })}
         </section>
       </div>
