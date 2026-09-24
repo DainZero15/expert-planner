@@ -46,18 +46,57 @@ const estimatePeople = (documentType: "order" | "repair" | "invoice", text: stri
   return null;
 };
 
+const tableWorkOrderStarts = (text: string) => [...text.matchAll(/(?:^|\n)\s*(?:\d{2}-\d{2}-\d{2}\s+)?[OR]\s*(?:E-\d{6,}|\d{7,})\b/gim)].map((match) => match.index || 0);
+
+const workOrderIdentity = (chunk: string) => {
+  const lines = chunk.split("\n").map((line) => line.trim()).filter(Boolean);
+  const lineIndex = lines.findIndex((line) => /\b[OR]\s*(?:E-\d{6,}|\d{7,})\b/i.test(line));
+  const firstLine = lineIndex >= 0 ? lines[lineIndex] : "";
+  const match = /\b([OR])\s*(E-\d{6,}|\d{7,})\s+([A-Z][A-Z-]{1,})\s+(.+)/i.exec(firstLine);
+  if (!match) return null;
+
+  const [, kind, number, seller, rawRest] = match;
+  const following = lines.slice(lineIndex + 1, Math.min(lines.length, lineIndex + 4));
+  const postcodeLine = following.find((line) => /\b\d{4}\s?[A-Z]{2}\b/i.test(line)) || "";
+  const postalMatch = /\b(\d{4}\s?[A-Z]{2})\s+(.+?)(?:\s+(?:0\d[\d -]{7,}|\d{10,}))?$/i.exec(postcodeLine);
+  const phones = [...`${firstLine} ${postcodeLine}`.matchAll(/(?:\+31|0)\d[\d ()-]{7,}/g)].map((item) => item[0].replace(/\s+/g, " ").trim());
+  const rest = rawRest.replace(/(?:\+31|0)\d[\d ()-]{7,}/g, "").trim();
+  const addressMatch = /^(.+?)\s+((?:[A-ZÀ-Ý][A-Za-zÀ-ÿ'.-]*\s*){1,4}(?:,\s*(?:Burg\.?|Sint|St\.?)\s*)?\d+[A-Za-z0-9/-]*)$/u.exec(rest);
+  let name = addressMatch?.[1]?.trim() || "";
+  let addressLine = addressMatch?.[2]?.replace(/\s+/g, " ").trim() || "";
+  // In a table export an initial is sometimes positioned directly in front of
+  // the street column (for example "Albers, A  Zivaert 12"). Keep that
+  // initial with the customer instead of treating it as part of the street.
+  const trailingInitial = name.endsWith(",") ? /^((?:[A-Z]\.?){1,3})\s+(.+)$/.exec(addressLine) : null;
+  if (trailingInitial) {
+    name = `${name} ${trailingInitial[1]}`;
+    addressLine = trailingInitial[2];
+  }
+  return {
+    documentType: kind.toUpperCase() === "R" ? "repair" as const : "order" as const,
+    orderNumber: `${kind.toUpperCase() === "R" ? "R-" : ""}${number}`,
+    seller,
+    name,
+    addressLine,
+    postalCode: postalMatch?.[1]?.toUpperCase() || null,
+    city: postalMatch?.[2]?.trim() || null,
+    phone: phones.length ? [...new Set(phones)].join(" / ") : null,
+  };
+};
+
 const parsePdfChunk = (chunk: string, workOrderBranch: string | null = null): ImportDraft => {
   const isWorkOrder = Boolean(workOrderBranch) || /rittenlijst|werkbon|\bxxx\b/i.test(chunk);
-  const documentType = /(?:^|\n)\s*R\s*\d{7,}\b|reparatie|servicebon|storingsbon|reparatiebon/i.test(chunk) ? "repair" as const : /factuur|invoice/i.test(chunk) ? "invoice" as const : "order" as const;
+  const tableIdentity = isWorkOrder ? workOrderIdentity(chunk) : null;
+  const documentType = tableIdentity?.documentType || (/(?:^|\n)\s*R\s*\d{7,}\b|reparatie|servicebon|storingsbon|reparatiebon/i.test(chunk) ? "repair" as const : /factuur|invoice/i.test(chunk) ? "invoice" as const : "order" as const);
   const addressMatch = /\b([A-ZÀ-Ý][A-Za-zÀ-ÿ' .-]{1,70}?\s+\d+[A-Za-z0-9/-]*)\s*[\n,; ]+\s*(\d{4}\s?[A-Z]{2})\s+([A-ZÀ-Ý][A-Za-zÀ-ÿ' .-]{1,60})/mi.exec(chunk);
-  const name = firstMatch(chunk, [/(?:contactpersoon|klant(?:naam)?|naam|geadresseerde|relatie)\s*[:\-]\s*([^\n]{2,120})/i]) || "";
-  const orderNumber = firstMatch(chunk, [/(?:ordernummer|order\s*nr\.?|opdrachtnummer|opdracht\s*nr\.?|identificatie|reparatienummer|bonnummer|factuurnummer)\s*[:#\-]?\s*([A-Za-z0-9][A-Za-z0-9./_-]{2,80})/i, /\b([OR]\s*\d{7,}|E-\d{6,}|\d{10,})\b/i]);
+  const name = tableIdentity?.name || firstMatch(chunk, [/(?:contactpersoon|klant(?:naam)?|naam|geadresseerde|relatie)\s*[:\-]\s*([^\n]{2,120})/i]) || "";
+  const orderNumber = tableIdentity?.orderNumber || firstMatch(chunk, [/(?:ordernummer|order\s*nr\.?|opdrachtnummer|opdracht\s*nr\.?|identificatie|reparatienummer|bonnummer|factuurnummer)\s*[:#\-]?\s*([A-Za-z0-9][A-Za-z0-9./_-]{2,80})/i, /\b([OR]\s*\d{7,}|E-\d{6,}|\d{10,})\b/i]);
   const product = firstMatch(chunk, [/(?:werkzaamheden|werksoort|taak|omschrijving|product|apparaat|reparatie|dienst)\s*[:\-]\s*([^\n]{2,180})/i]);
   const workType = documentType === "repair" ? `Reparatie${product ? ` - ${product}` : ""}` : product;
   const branch = firstMatch(chunk, [/(?:filiaal|vestiging|winkel|afkomstig van)\s*[:\-]\s*([^\n]{2,100})/i]) || workOrderBranch;
-  const phone = firstMatch(chunk, [/(?:telefoon|tel\.?|mobiel)\s*[:\-]\s*([+0-9() /-]{7,30})/i]);
+  const phone = tableIdentity?.phone || firstMatch(chunk, [/(?:telefoon|tel\.?|mobiel)\s*[:\-]\s*([+0-9() /-]{7,30})/i]);
   const email = firstMatch(chunk, [/(?:e-?mail(?:adres)?)\s*[:\-]\s*([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})/i]);
-  const seller = firstMatch(chunk, [/(?:verkoper|medewerker|verkoopcontact)\s*[:\-]\s*([^\n]{2,120})/i]);
+  const seller = tableIdentity?.seller || firstMatch(chunk, [/(?:verkoper|medewerker|verkoopcontact)\s*[:\-]\s*([^\n]{2,120})/i]);
   const details = workOrderDetails(chunk);
   const issues: string[] = [];
   if (!name) issues.push("Klantnaam ontbreekt in PDF");
@@ -65,11 +104,11 @@ const parsePdfChunk = (chunk: string, workOrderBranch: string | null = null): Im
   if (!orderNumber) issues.push("Ordernummer ontbreekt in PDF");
   return {
     name,
-    addressLine: addressMatch?.[1] || "",
+    addressLine: tableIdentity?.addressLine || addressMatch?.[1] || "",
     customerNumber: null,
     orderNumber,
-    postalCode: addressMatch?.[2]?.toUpperCase() || null,
-    city: addressMatch?.[3] || null,
+    postalCode: tableIdentity?.postalCode || addressMatch?.[2]?.toUpperCase() || null,
+    city: tableIdentity?.city || addressMatch?.[3] || null,
     email,
     phone,
     workType,
@@ -114,7 +153,7 @@ async function parsePdfFile(buffer: ArrayBuffer) {
   const workOrderBranch = branchFromWorkOrderHeader(text);
   const labelledStarts = [...text.matchAll(/(?:ordernummer|order\s*nr\.?|opdrachtnummer|identificatie|reparatienummer|bonnummer|factuurnummer)\s*[:#\-]?\s*[A-Za-z0-9][A-Za-z0-9./_-]{2,80}/gi)].map((match) => match.index || 0);
   const workOrderStarts = /rittenlijst|werkbon/i.test(text)
-    ? [...text.matchAll(/(?:^|\n)\s*(?:[OR]\s*)?(?:E-\d{6,}|\d{8,})\b/gim)].map((match) => match.index || 0)
+    ? tableWorkOrderStarts(text)
     : [];
   const starts = [...new Set([...labelledStarts, ...workOrderStarts])].sort((left, right) => left - right);
   const chunks = starts.length ? starts.map((start, index) => text.slice(start, starts[index + 1] || text.length)) : [text];
