@@ -26,7 +26,7 @@ export function CustomerTrash({ customers }: { customers: ArchivedCustomer[] }) 
         </label>)}
       </div>
       {editing && <div className="trash-actions">
-        <button name="intent" value="restore" disabled={!selected.length}>Geselecteerde terugzetten</button>
+        <button name="intent" value="restore" disabled={!selected.length}>Terugzetten naar weekplanner</button>
         <button className="danger" name="intent" value="delete" disabled={!selected.length} onClick={(event) => { if (!window.confirm("Deze klanten en hun orders worden definitief verwijderd. Doorgaan?")) event.preventDefault(); }}>Definitief verwijderen</button>
       </div>}
     </form>

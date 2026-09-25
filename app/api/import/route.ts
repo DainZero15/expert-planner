@@ -40,26 +40,46 @@ export async function PUT(request: Request) {
   const parsed = z.array(importRowSchema).max(5000).safeParse(body.rows);
   if (!parsed.success) return NextResponse.json({ error: "Ongeldige import" }, { status: 400 });
   const rows = parsed.data.filter((row) => !row.issues.length);
+  // A number that already exists may belong to a customer who was moved to the
+  // archive. That is not a duplicate the planner should discard: importing the
+  // same work order again is an explicit request to put it back into circulation.
+  const { data: existingOrders, error: orderReadError } = await db
+    .from("orders")
+    .select("id,source_order_number,status,customer_id,imported_customer_id")
+    .limit(5000);
+  if (orderReadError) return NextResponse.json({ error: `Orders controleren mislukt: ${orderReadError.message}` }, { status: 500 });
+  const existingByNumber = new Map((existingOrders || [])
+    .filter((order) => order.source_order_number)
+    .map((order) => [normalizedOrderNumber(order.source_order_number!), order]));
+  const restoredOrders = rows.flatMap((row) => {
+    if (!row.orderNumber) return [];
+    const existing = existingByNumber.get(normalizedOrderNumber(row.orderNumber));
+    return existing?.status === "archived" ? [existing] : [];
+  });
+  const newOrders = rows.filter((row) => {
+    if (!row.orderNumber) return false;
+    return !existingByNumber.has(normalizedOrderNumber(row.orderNumber));
+  });
+  const restoredCustomerIds = [...new Set(restoredOrders.flatMap((order) => [order.customer_id, order.imported_customer_id]).filter((id): id is string => Boolean(id)))];
+  if (restoredOrders.length) {
+    const [{ error: restoreOrdersError }, { error: restoreCustomersError }] = await Promise.all([
+      db.from("orders").update({ status: "new" }).in("id", restoredOrders.map((order) => order.id)),
+      restoredCustomerIds.length
+        ? db.from("customers").update({ status: "active" }).in("id", restoredCustomerIds)
+        : Promise.resolve({ error: null }),
+    ]);
+    if (restoreOrdersError || restoreCustomersError) return NextResponse.json({ error: `Gearchiveerde orders herstellen mislukt: ${(restoreOrdersError || restoreCustomersError)?.message}` }, { status: 500 });
+  }
   const { data: existingData, error: customerReadError } = await db.from("customers").select("id,name,address_line,postal_code,city").neq("status", "archived").limit(5000);
   if (customerReadError) return NextResponse.json({ error: `Klanten controleren mislukt: ${customerReadError.message}` }, { status: 500 });
   const customerIds = new Map((existingData || []).map((customer) => [customerKey({ name: customer.name, addressLine: customer.address_line, postalCode: customer.postal_code, city: customer.city }), customer.id]));
   const newCustomers = new Map<string, typeof rows[number]>();
-  for (const row of rows) { const key = customerKey(row); if (!customerIds.has(key)) newCustomers.set(key, row); }
+  for (const row of newOrders) { const key = customerKey(row); if (!customerIds.has(key)) newCustomers.set(key, row); }
   if (newCustomers.size) {
     const { data: created, error } = await db.from("customers").insert([...newCustomers.values()].map((row) => ({ customer_number: row.customerNumber, name: row.name, address_line: row.addressLine, postal_code: row.postalCode, city: row.city, email: row.email, phone: row.phone, desired_visit_minutes: row.durationMinutes, extra_fields: {}, geocode_status: "pending" }))).select("id,name,address_line,postal_code,city");
     if (error) return NextResponse.json({ error: `Klanten opslaan mislukt: ${error.message}` }, { status: 500 });
     for (const customer of created || []) customerIds.set(customerKey({ name: customer.name, addressLine: customer.address_line, postalCode: customer.postal_code, city: customer.city }), customer.id);
   }
-  const { data: existingOrders, error: orderReadError } = await db.from("orders").select("source_order_number").limit(5000);
-  if (orderReadError) return NextResponse.json({ error: `Orders controleren mislukt: ${orderReadError.message}` }, { status: 500 });
-  const knownOrders = new Set((existingOrders || []).flatMap((order) => order.source_order_number ? [normalizedOrderNumber(order.source_order_number)] : []));
-  const newOrders = rows.filter((row) => {
-    if (!row.orderNumber) return false;
-    const orderKey = normalizedOrderNumber(row.orderNumber);
-    if (knownOrders.has(orderKey)) return false;
-    knownOrders.add(orderKey);
-    return true;
-  });
   const { data: branchData, error: branchReadError } = await db.from("branches").select("id,name").limit(1000);
   if (branchReadError) return NextResponse.json({ error: `Vestigingen controleren mislukt: ${branchReadError.message}` }, { status: 500 });
   const branchIds = new Map((branchData || []).map((branch) => [normalizedOrderNumber(branch.name), branch.id]));
@@ -90,5 +110,5 @@ export async function PUT(request: Request) {
     })));
     if (error) return NextResponse.json({ error: `Orders opslaan mislukt: ${error.message}` }, { status: 500 });
   }
-  return NextResponse.json({ customers: newCustomers.size, orders: newOrders.length, branches: newBranchNames.length, skipped: parsed.data.length - newOrders.length });
+  return NextResponse.json({ customers: newCustomers.size, orders: newOrders.length + restoredOrders.length, restored: restoredOrders.length, branches: newBranchNames.length, skipped: parsed.data.length - newOrders.length - restoredOrders.length });
 }

@@ -48,7 +48,7 @@ type Appointment = {
   status: string;
 };
 
-export default async function PlanningPage({ searchParams }: { searchParams: Promise<{ week?: string; proposal?: string; skipped?: string; duplicates?: string }> }) {
+export default async function PlanningPage({ searchParams }: { searchParams: Promise<{ week?: string; proposal?: string; skipped?: string; duplicates?: string; restored?: string }> }) {
   const db = await createClient();
   const { data: { user } } = await db.auth.getUser();
   if (!user) redirect("/login");
@@ -142,6 +142,7 @@ export default async function PlanningPage({ searchParams }: { searchParams: Pro
       </div>
     </section>
 
+    {Number(params.restored || 0) > 0 && <section className="card proposal-result" style={{ marginTop: 20 }}>Teruggezet: <strong>{params.restored}</strong> klant{Number(params.restored) === 1 ? "" : "en"} en de bijbehorende gearchiveerde orders staan weer bij <strong>Nog te doen</strong> in de weekplanner.</section>}
     {params.proposal && <section className={params.proposal === "error" ? "card error" : "card proposal-result"} style={{ marginTop: 20 }}>
       {params.proposal === "error"
         ? "Het weekvoorstel kon niet in Supabase worden opgeslagen. Controleer de rechten voor de tabel appointments en probeer daarna opnieuw."

@@ -66,7 +66,7 @@ export default function ImportClient() {
       return;
     }
 
-    setMessage(`${data.orders} orders opgeslagen bij ${data.customers} nieuwe klanten${data.branches ? ` en ${data.branches} nieuwe vestiging${data.branches === 1 ? "" : "en"}` : ""}; ${data.skipped} overgeslagen.`);
+    setMessage(`${data.orders} orders beschikbaar in de weekplanner${data.restored ? `, waarvan ${data.restored} uit het archief hersteld` : ""}; ${data.customers} nieuwe klanten${data.branches ? ` en ${data.branches} nieuwe vestiging${data.branches === 1 ? "" : "en"}` : ""}; ${data.skipped} al actieve dubbele orders overgeslagen.`);
     setPreviewData(undefined);
     setIsSaved(true);
   }

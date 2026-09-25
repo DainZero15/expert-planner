@@ -19,10 +19,11 @@ export async function POST(request: Request) {
   if (!ids.length) return NextResponse.redirect(new URL("/customers/prullenbak", request.url), 303);
 
   if (intent === "restore") {
-    await Promise.all([
+    const [customerResult, orderResult] = await Promise.all([
       db.from("customers").update({ status: "active" }).in("id", ids),
-      db.from("orders").update({ status: "new" }).in("customer_id", ids).eq("status", "archived"),
+      db.from("orders").update({ status: "new" }).or(`customer_id.in.(${ids.join(",")}),imported_customer_id.in.(${ids.join(",")})`).eq("status", "archived"),
     ]);
+    if (customerResult.error || orderResult.error) return NextResponse.redirect(new URL("/customers/prullenbak?error=restore", request.url), 303);
   } else if (intent === "delete" || intent === "empty") {
     const { error: appointmentError } = await db.from("appointments").delete().in("customer_id", ids);
     if (!appointmentError) await db.from("customers").delete().in("id", ids);
@@ -30,5 +31,6 @@ export async function POST(request: Request) {
   revalidatePath("/customers");
   revalidatePath("/customers/prullenbak");
   revalidatePath("/planning");
+  if (intent === "restore") return NextResponse.redirect(new URL(`/planning?restored=${ids.length}`, request.url), 303);
   return NextResponse.redirect(new URL("/customers/prullenbak", request.url), 303);
 }
