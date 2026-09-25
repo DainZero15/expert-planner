@@ -171,6 +171,7 @@ export default async function PlanningPage({ searchParams }: { searchParams: Pro
           const items = byDay.get(key) || [];
           const dailyExpertIds = [...new Set(items.map((appointment) => appointment.expert_id || "team"))];
           const dailyExperts = dailyExpertIds.map((expertId) => expertId === "team" ? "Team" : expertNames.get(expertId) || "Expert");
+          const routeLabel = (expertId: string) => expertId === "team" ? "Team" : expertNames.get(expertId) || "Expert";
           const travelSegments = items.flatMap((appointment) => {
             const expertId = appointment.expert_id || "team";
             const nextAppointment = items
@@ -203,13 +204,24 @@ export default async function PlanningPage({ searchParams }: { searchParams: Pro
               <div className="day-label">
                 <strong>{dayName.format(day)}</strong>
                 <span>{items.length ? `${items.length} afspraak${items.length === 1 ? "" : "en"}` : isExceptionDay ? "Op aanvraag" : "Vrij"}</span>
-                {dailyExperts.length > 0 && <small className="day-experts">Monteurs: {dailyExperts.join(", ")}</small>}
-                <small className="day-toggle">Monteurs en blokken bekijken</small>
+                {dailyExperts.length > 0 && <ul className="day-expert-list" aria-label="Monteurs"><li className="day-expert-heading">Monteurs</li>{dailyExperts.map((expert) => <li key={expert}>{expert}</li>)}</ul>}
+                <small className="day-toggle">Routeplanning tonen</small>
               </div>
-              <div className="day-summary-hint">{items.length ? `${dailyExpertIds.length} monteur${dailyExpertIds.length === 1 ? "" : "s"} · klik om ${items.length ? "in of uit" : "uit"} te klappen` : "Klik om handmatig te plannen"}</div>
+              <div className="day-summary-hint">{items.length ? `${dailyExpertIds.length} route${dailyExpertIds.length === 1 ? "" : "s"} · klik voor het dagoverzicht` : "Klik om deze dag te openen voor handmatige planning"}</div>
             </summary>
             <div className="calendar-row planner-day-detail" style={{ minHeight: `${Math.max(106, dailyExpertIds.length * laneHeight + 14)}px` }}>
-              <div className="day-label day-detail-label"><small>{dailyExperts.length ? `Routeblokken: ${dailyExperts.join(", ")}` : "Sleep een order hierheen om deze dag te vullen."}</small></div>
+              <div className="day-label day-route-labels">
+                {dailyExpertIds.length
+                  ? dailyExpertIds.map((expertId, lane) => {
+                    const routeItems = items.filter((item) => (item.expert_id || "team") === expertId);
+                    return <div className="day-route-label" key={expertId} style={{ minHeight: `${laneHeight}px` }}>
+                      <small>Route {lane + 1}</small>
+                      <strong>{routeLabel(expertId)}</strong>
+                      <span>{routeItems.length} afspraak{routeItems.length === 1 ? "" : "en"}</span>
+                    </div>;
+                  })
+                  : <div className="day-route-empty">Sleep een order hierheen om deze dag te vullen.</div>}
+              </div>
               <PlanningDropTarget date={key}>
               {hours.map((hour) => <div className="hour-cell" key={hour} />)}
               {items.map((appointment) => {
