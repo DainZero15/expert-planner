@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
-const zoomLevels = [80, 100, 120, 150, 180];
+const zoomLevels = [80, 90, 100, 110, 120, 130, 140, 150, 165, 180];
 const widthFor = (hourWidth: number) => `${170 + hourWidth * 24}px`;
 
 export function PlannerTimeZoom() {
   const [hourWidth, setHourWidth] = useState(120);
+  const lastTrackpadZoom = useRef(0);
 
   const apply = (nextWidth: number) => {
     document.documentElement.style.setProperty("--planner-hour-width", `${nextWidth}px`);
@@ -28,11 +29,18 @@ export function PlannerTimeZoom() {
       // it enlarges the planning hours instead of the entire browser page.
       if (!event.ctrlKey) return;
       event.preventDefault();
+      const now = Date.now();
+      // Trackpads emit many small wheel events for a single pinch. Limit the
+      // response so zooming feels deliberate instead of jumping several steps.
+      if (now - lastTrackpadZoom.current < 280) return;
       const index = zoomLevels.indexOf(hourWidth);
       const nextIndex = event.deltaY < 0
         ? Math.min(zoomLevels.length - 1, index + 1)
         : Math.max(0, index - 1);
-      if (nextIndex !== index) apply(zoomLevels[nextIndex]);
+      if (nextIndex !== index) {
+        lastTrackpadZoom.current = now;
+        apply(zoomLevels[nextIndex]);
+      }
     };
     calendar.addEventListener("wheel", zoomWithTrackpad, { passive: false });
     return () => calendar.removeEventListener("wheel", zoomWithTrackpad);
