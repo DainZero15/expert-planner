@@ -9,6 +9,7 @@ import { PlanningDragList } from "@/components/planning-drag-list";
 import { PlanningDropTarget } from "@/components/planning-drop-target";
 import { ResizableAppointment } from "@/components/resizable-appointment";
 import { PlannerDayControls } from "@/components/planner-day-controls";
+import { PlannerTimeZoom } from "@/components/planner-time-zoom";
 import { estimatedDurationMinutes } from "@/lib/planning/duration";
 import { estimatedTravelMinutes, lunchMinutes, travelStartAfterVisit } from "@/lib/planning/workday";
 
@@ -159,6 +160,7 @@ export default async function PlanningPage({ searchParams }: { searchParams: Pro
 
     <div className="planner-board">
       <div className="calendar-scroll">
+        <PlannerTimeZoom />
         <PlannerDayControls />
         <section className="week-calendar" aria-label="Weekplanner">
         <div className="calendar-head">
@@ -234,7 +236,7 @@ export default async function PlanningPage({ searchParams }: { searchParams: Pro
                 const href = appointment.order_id ? `/planning/order/${appointment.order_id}` : `/planning/customer/${appointment.customer_id}`;
                 const left = `${Math.max(0, start) / 60 / hours.length * 100}%`;
                 const maxWidth = 100 - Math.max(0, start) / 60 / hours.length * 100;
-                return <ResizableAppointment key={appointment.id} appointmentId={appointment.id} orderId={appointment.order_id} href={href} className={`appointment ${appointment.status === "confirmed" ? "confirmed" : "proposal"}`} left={left} top={`${8 + expertLane * laneHeight}px`} maxWidth={maxWidth} durationMinutes={durationMinutes}>
+                return <ResizableAppointment key={appointment.id} href={href} className={`appointment ${appointment.status === "confirmed" ? "confirmed" : "proposal"}`} left={left} top={`${8 + expertLane * laneHeight}px`} maxWidth={maxWidth} durationMinutes={durationMinutes}>
                   <strong>{customers.get(appointment.customer_id)?.name || "Ingepland bezoek"}</strong>
                   <span className="appointment-task">{order?.work_type || "Werkzaamheden nog bepalen"}</span>
                   <span className="appointment-meta">{estimatedMinutes} min · {formatTime(appointment.starts_at)}–{formatTime(appointment.ends_at)}</span>
