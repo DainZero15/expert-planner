@@ -32,6 +32,38 @@ const branchAtPosition = (headers: { index: number; branch: string }[], position
 
 const cleanMemo = (value: string) => value.replace(/\bXXX\b\s*[:\-]?\s*/gi, "").replace(/\s+/g, " ").trim();
 
+type AddressDetails = { addressLine: string; postalCode: string | null; city: string | null; nearbyName: string | null };
+
+const ignoredNameLines = /^(?:klant(?:gegevens)?|afleveradres|bezorgadres|factuuradres|adres|contact(?:persoon)?|gegevens|pagina\s+\d+|order(?:nummer)?|werkbon|omschrijving)$/i;
+
+// PDF exports often put a customer block on separate lines instead of using
+// labels such as "Klantnaam". Read that block as a human would: find a Dutch
+// postcode, then the street on or directly above that line and finally the
+// preceding name. This is deliberately independent of one supplier template.
+const addressFromPdfText = (text: string): AddressDetails | null => {
+  const lines = text.split("\n").map((line) => line.replace(/\s+/g, " ").trim()).filter(Boolean);
+  for (let index = 0; index < lines.length; index += 1) {
+    const postal = /\b(\d{4}\s?[A-Z]{2})\b/i.exec(lines[index]);
+    if (!postal) continue;
+    const afterPostal = lines[index].slice((postal.index || 0) + postal[0].length).replace(/^[,;\- ]+/, "").trim();
+    const inlineStreet = lines[index].slice(0, postal.index).replace(/[,:;\- ]+$/, "").trim();
+    const nearby = [inlineStreet, lines[index - 1] || "", lines[index - 2] || ""];
+    const addressLine = nearby.find((line) => /\d/.test(line) && !ignoredNameLines.test(line)) || "";
+    if (!addressLine) continue;
+    const streetIndex = lines.indexOf(addressLine);
+    const rawName = streetIndex > 0 ? lines[streetIndex - 1].replace(/^(?:naam|klant|geadresseerde|aan)\s*[:\-]?\s*/i, "").trim() : "";
+    const nearbyName = rawName && !ignoredNameLines.test(rawName) && !/\d{4}\s?[A-Z]{2}|\d{3,}/i.test(rawName) ? rawName : null;
+    return { addressLine, postalCode: postal[1].toUpperCase(), city: afterPostal || null, nearbyName };
+  }
+  return null;
+};
+
+const broadOrderNumber = (text: string) => firstMatch(text, [
+  /(?:order(?:nummer|\s*(?:nr\.?|no\.?|id))?|verkooporder|sales\s*order|opdracht(?:nummer|\s*(?:nr\.?|id))?|referentie(?:nummer)?|kenmerk|documentnummer|bon(?:nummer|\s*nr\.?)|factuurnummer|reparatienummer|werkbonnummer)\s*[:#\-]?\s*([A-Za-z]{0,4}[A-Za-z0-9][A-Za-z0-9./_-]{3,80})/i,
+  /\b([A-Z]{1,4}[-_/]\d{4,}(?:[./-]\d+)?)\b/i,
+  /\b([1-9]\d{6,}(?:[./-]\d+)?)\b/,
+]);
+
 const workOrderDetails = (chunk: string) => {
   const xxxLines = [...chunk.matchAll(/(?:^|\n)\s*XXX\s*[:\-]?\s*([^\n]{3,500})/gim)].map((match) => cleanMemo(match[1]));
   const memoLabel = firstMatch(chunk, [/(?:memo|opmerking(?:en)?|instructie(?:s)?|bijzonderheden)\s*[:\-]\s*([^\n]{3,500})/i]);
@@ -93,9 +125,10 @@ const parsePdfChunk = (chunk: string, workOrderBranch: string | null = null): Im
   const tableIdentity = isWorkOrder ? workOrderIdentity(chunk) : null;
   const documentType = tableIdentity?.documentType || (/(?:^|\n)\s*R\s*\d{7,}\b|reparatie|servicebon|storingsbon|reparatiebon/i.test(chunk) ? "repair" as const : /factuur|invoice/i.test(chunk) ? "invoice" as const : "order" as const);
   const addressMatch = /\b([A-ZÀ-Ý][A-Za-zÀ-ÿ' .-]{1,70}?\s+\d+[A-Za-z0-9/-]*)\s*[\n,; ]+\s*(\d{4}\s?[A-Z]{2})\s+([A-ZÀ-Ý][A-Za-zÀ-ÿ' .-]{1,60})/mi.exec(chunk);
-  const name = tableIdentity?.name || firstMatch(chunk, [/(?:contactpersoon|klant(?:naam)?|naam|geadresseerde|relatie)\s*[:\-]\s*([^\n]{2,120})/i]) || "";
-  const orderNumber = tableIdentity?.orderNumber || firstMatch(chunk, [/(?:ordernummer|order\s*nr\.?|opdrachtnummer|opdracht\s*nr\.?|identificatie|reparatienummer|bonnummer|factuurnummer)\s*[:#\-]?\s*([A-Za-z0-9][A-Za-z0-9./_-]{2,80})/i, /\b([OR]\s*\d{7,}|E-\d{6,}|\d{10,})\b/i]);
-  const product = firstMatch(chunk, [/(?:werkzaamheden|werksoort|taak|omschrijving|product|apparaat|reparatie|dienst)\s*[:\-]\s*([^\n]{2,180})/i]);
+  const blockAddress = addressFromPdfText(chunk);
+  const name = tableIdentity?.name || firstMatch(chunk, [/(?:contactpersoon|klant(?:naam|gegevens)?|naam|geadresseerde|relatie|afnemer|tenaamstelling|afleveradres)\s*[:\-]?\s*([^\n]{2,120})/i]) || blockAddress?.nearbyName || "";
+  const orderNumber = tableIdentity?.orderNumber || broadOrderNumber(chunk);
+  const product = firstMatch(chunk, [/(?:werkzaamheden|werksoort|taak|omschrijving|product|apparaat|reparatie|dienst|artikel(?:omschrijving)?)\s*[:\-]\s*([^\n]{2,180})/i]);
   const workType = documentType === "repair" ? `Reparatie${product ? ` - ${product}` : ""}` : product;
   const branch = firstMatch(chunk, [/(?:filiaal|vestiging|winkel|afkomstig van)\s*[:\-]\s*([^\n]{2,100})/i]) || workOrderBranch;
   const phone = tableIdentity?.phone || firstMatch(chunk, [/(?:telefoon|tel\.?|mobiel)\s*[:\-]\s*([+0-9() /-]{7,30})/i]);
@@ -104,15 +137,15 @@ const parsePdfChunk = (chunk: string, workOrderBranch: string | null = null): Im
   const details = workOrderDetails(chunk);
   const issues: string[] = [];
   if (!name) issues.push("Klantnaam ontbreekt in PDF");
-  if (!addressMatch) issues.push("Adres ontbreekt in PDF");
+  if (!addressMatch && !blockAddress && !tableIdentity?.addressLine) issues.push("Adres ontbreekt in PDF");
   if (!orderNumber) issues.push("Ordernummer ontbreekt in PDF");
   return {
     name,
-    addressLine: tableIdentity?.addressLine || addressMatch?.[1] || "",
+    addressLine: tableIdentity?.addressLine || addressMatch?.[1] || blockAddress?.addressLine || "",
     customerNumber: null,
     orderNumber,
-    postalCode: tableIdentity?.postalCode || addressMatch?.[2]?.toUpperCase() || null,
-    city: tableIdentity?.city || addressMatch?.[3] || null,
+    postalCode: tableIdentity?.postalCode || addressMatch?.[2]?.toUpperCase() || blockAddress?.postalCode || null,
+    city: tableIdentity?.city || addressMatch?.[3] || blockAddress?.city || null,
     email,
     phone,
     workType,
@@ -129,6 +162,69 @@ const parsePdfChunk = (chunk: string, workOrderBranch: string | null = null): Im
   };
 };
 
+const aiRowsSchema = z.object({
+  rows: z.array(z.object({
+    index: z.number().int().nonnegative(),
+    orderNumber: z.string().nullable().optional(),
+    name: z.string().nullable().optional(),
+    addressLine: z.string().nullable().optional(),
+    postalCode: z.string().nullable().optional(),
+    city: z.string().nullable().optional(),
+    workType: z.string().nullable().optional(),
+    memo: z.string().nullable().optional(),
+    documentType: z.enum(["order", "repair", "invoice"]).optional(),
+  })).max(5000),
+});
+
+const usable = (value: string | null | undefined) => value?.replace(/\s+/g, " ").trim() || null;
+
+// This second pass handles layouts that do not use known headings. It is
+// server-only, never invents information, and quietly falls back to the local
+// recogniser if an AI key is not configured or a document cannot be analysed.
+async function refinePdfDraftsWithAi(chunks: { text: string }[], drafts: ImportDraft[]) {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey || !drafts.length) return { drafts, aiUsed: false };
+  const source = chunks.map((chunk, index) => `DOCUMENT ${index}\n${chunk.text.slice(0, 7000)}`).join("\n\n").slice(0, 120000);
+  try {
+    const response = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: process.env.OPENAI_IMPORT_MODEL || "gpt-4.1-mini",
+        input: `Extract only explicitly present customer and order details from these Dutch sales orders, work orders, invoices or repair forms. Return one row per DOCUMENT. Never make up a name, address or order number. A customer name is a person or company, not a seller, shop or heading.\n\n${source}`,
+        text: { format: { type: "json_schema", name: "import_fields", strict: true, schema: {
+          type: "object", additionalProperties: false, required: ["rows"], properties: {
+            rows: { type: "array", items: { type: "object", additionalProperties: false, required: ["index", "orderNumber", "name", "addressLine", "postalCode", "city", "workType", "memo", "documentType"], properties: {
+              index: { type: "integer" }, orderNumber: { type: ["string", "null"] }, name: { type: ["string", "null"] }, addressLine: { type: ["string", "null"] }, postalCode: { type: ["string", "null"] }, city: { type: ["string", "null"] }, workType: { type: ["string", "null"] }, memo: { type: ["string", "null"] }, documentType: { type: "string", enum: ["order", "repair", "invoice"] },
+            } } },
+          },
+        } } },
+      }),
+    });
+    if (!response.ok) return { drafts, aiUsed: false };
+    const payload = await response.json() as { output_text?: string };
+    const checked = aiRowsSchema.safeParse(payload.output_text ? JSON.parse(payload.output_text) : null);
+    if (!checked.success) return { drafts, aiUsed: false };
+    const patches = new Map(checked.data.rows.map((row) => [row.index, row]));
+    const refined = drafts.map((draft, index) => {
+      const patch = patches.get(index);
+      if (!patch) return draft;
+      const name = draft.name || usable(patch.name) || "";
+      const addressLine = draft.addressLine || usable(patch.addressLine) || "";
+      const orderNumber = draft.orderNumber || usable(patch.orderNumber);
+      const issues = draft.issues.filter((issue) => !(
+        (issue.includes("Klantnaam") && name) ||
+        (issue.includes("Adres") && addressLine) ||
+        (issue.includes("Ordernummer") && orderNumber)
+      ));
+      return { ...draft, name, addressLine, orderNumber, postalCode: draft.postalCode || usable(patch.postalCode), city: draft.city || usable(patch.city), workType: draft.workType || usable(patch.workType), memo: draft.memo || usable(patch.memo), documentType: patch.documentType || draft.documentType, issues };
+    });
+    return { drafts: refined, aiUsed: true };
+  } catch {
+    return { drafts, aiUsed: false };
+  }
+}
+
 async function parsePdfFile(buffer: ArrayBuffer) {
   // pdf-parse v2 uses the current PDF.js reader. It copes with more variants of
   // PDF exports than the legacy parser (including many original order exports).
@@ -142,7 +238,9 @@ async function parsePdfFile(buffer: ArrayBuffer) {
   const parser = new PDFParse({ data: new Uint8Array(buffer.slice(0)), CanvasFactory });
   let parsed: { text: string; total: number };
   try {
-    parsed = await parser.getText();
+    // Keep page boundaries: many supplier exports contain one order per page
+    // but no repeated "ordernummer" heading.
+    parsed = await parser.getText({ pageJoiner: "\n<<<PAGE page_number>>>\n", cellSeparator: "\t" });
   } catch (error) {
     const details = error instanceof Error ? error.message : "";
     if (/xref|cross-reference|invalid pdf|malformed/i.test(details)) {
@@ -156,16 +254,23 @@ async function parsePdfFile(buffer: ArrayBuffer) {
   if (!text) throw Error("Deze PDF bevat geen selecteerbare tekst. Gebruik een PDF met tekst of exporteer hem eerst vanuit Vendit.");
   const isWorkOrder = /rittenlijst|werkbon/i.test(text);
   const headers = isWorkOrder ? workOrderHeaders(text) : [];
-  const labelledStarts = [...text.matchAll(/(?:ordernummer|order\s*nr\.?|opdrachtnummer|identificatie|reparatienummer|bonnummer|factuurnummer)\s*[:#\-]?\s*[A-Za-z0-9][A-Za-z0-9./_-]{2,80}/gi)].map((match) => match.index || 0);
+  const labelledStarts = [...text.matchAll(/(?:ordernummer|order\s*(?:nr\.?|no\.?|id)?|verkooporder|sales\s*order|opdrachtnummer|opdracht\s*(?:nr\.?|id)?|referentie(?:nummer)?|kenmerk|identificatie|reparatienummer|bonnummer|werkbonnummer|factuurnummer)\s*[:#\-]?\s*[A-Za-z0-9][A-Za-z0-9./_-]{2,80}/gi)].map((match) => match.index || 0);
+  // Some suppliers print a bare order number at the start of every row, with
+  // no "ordernummer" label. It still identifies a separate customer record.
+  const bareNumberStarts = [...text.matchAll(/(?:^|\n)\s*(?:[A-Z]{1,4}[-_/])?[1-9]\d{6,}(?:[./-]\d+)?\b/gm)].map((match) => (match.index || 0) + (match[0].startsWith("\n") ? 1 : 0));
   const workOrderStarts = isWorkOrder
     ? tableWorkOrderStarts(text)
     : [];
   // A workbon has its own table rows. Do not also split it on arbitrary
   // "opdrachtnummer" text in a memo: that would create a false extra order.
-  const starts = [...new Set(isWorkOrder ? workOrderStarts : labelledStarts)].sort((left, right) => left - right);
+  const starts = [...new Set(isWorkOrder ? workOrderStarts : [...labelledStarts, ...bareNumberStarts])].sort((left, right) => left - right);
+  const splitPages = text.split(/<<<PAGE\s+\d+>>>/i).map((page) => page.trim()).filter(Boolean);
+  const pageChunksLookIndependent = splitPages.length > 1 && splitPages.every((page) => Boolean(broadOrderNumber(page)) || Boolean(addressFromPdfText(page)));
   const chunks = starts.length
     ? starts.map((start, index) => ({ start, text: text.slice(start, starts[index + 1] || text.length) }))
-    : [{ start: 0, text }];
+    : pageChunksLookIndependent
+      ? splitPages.map((page, index) => ({ start: index, text: page }))
+      : [{ start: 0, text }];
   if (chunks.length > 5000) throw Error("PDF bevat te veel opdrachten.");
   const seenOrders = new Set<string>();
   const drafts: ImportDraft[] = chunks.map((chunk) => parsePdfChunk(chunk.text, branchAtPosition(headers, chunk.start))).map((row) => {
@@ -173,10 +278,11 @@ async function parsePdfFile(buffer: ArrayBuffer) {
     if (row.orderNumber) seenOrders.add(normalizedOrderNumber(row.orderNumber));
     return row;
   });
-  return { columns: [`PDF - ${parsed.total} pagina${parsed.total === 1 ? "" : "'s"}`, "Automatisch herkende velden"], drafts };
+  const analysed = await refinePdfDraftsWithAi(chunks, drafts);
+  return { columns: [`PDF - ${parsed.total} pagina${parsed.total === 1 ? "" : "'s"}`, analysed.aiUsed ? "AI-documentcontrole" : "Slimme documentcontrole"], drafts: analysed.drafts, aiUsed: analysed.aiUsed };
 }
 
-export async function parseFile(buffer: ArrayBuffer, filename = ""): Promise<{ columns: string[]; drafts: ImportDraft[] }> {
+export async function parseFile(buffer: ArrayBuffer, filename = ""): Promise<{ columns: string[]; drafts: ImportDraft[]; aiUsed?: boolean }> {
   if (/\.pdf$/i.test(filename)) return parsePdfFile(buffer);
   const workbook = XLSX.read(buffer, { type: "array", raw: false });
   const sheet = workbook.Sheets[workbook.SheetNames[0]];

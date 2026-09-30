@@ -27,7 +27,7 @@ export async function POST(request: Request) {
       if (row.orderNumber) seenOrders.add(normalizedOrderNumber(row.orderNumber));
       return row;
     });
-    return NextResponse.json({ filenames: parsedFiles.map((item) => item.filename), columns: [...new Set(parsedFiles.flatMap((item) => item.parsed.columns))], drafts });
+    return NextResponse.json({ filenames: parsedFiles.map((item) => item.filename), columns: [...new Set(parsedFiles.flatMap((item) => item.parsed.columns))], aiUsed: parsedFiles.some((item) => item.parsed.aiUsed), drafts });
   }
   catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : "Bestand niet leesbaar" }, { status: 400 }); }
 }
